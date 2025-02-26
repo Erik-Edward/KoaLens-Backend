@@ -1,0 +1,9 @@
+// C:\Projects\koalens-backend\tsconfig.paths.json
+{
+    "compilerOptions": {
+      "baseUrl": ".",
+      "paths": {
+        "@/*": ["src/*"]
+      }
+    }
+  }
