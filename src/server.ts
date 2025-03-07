@@ -1,4 +1,5 @@
 // src/server.ts
+import 'module-alias/register';
 import express, { RequestHandler } from 'express';
 import cors from 'cors';
 import { Anthropic } from '@anthropic-ai/sdk';
