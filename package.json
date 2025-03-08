@@ -6,12 +6,12 @@
     "node": ">=20.0.0"
   },
   "_moduleAliases": {
-    "@": "dist"
+    "@": "src"
   },
   "scripts": {
-    "start": "node dist/server.js",
+    "start": "node dist/simpleServer.js",
     "dev": "ts-node-dev -r tsconfig-paths/register src/server.ts",
-    "build": "tsc && cp -r src/data dist/",
+    "build": "tsc",
     "postinstall": "npm run build",
     "test": "jest --watchAll",
     "test:coverage": "jest --coverage",
@@ -25,6 +25,7 @@
   "description": "",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.33.1",
+    "@supabase/supabase-js": "^2.49.1",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "@types/node": "^22.10.5",

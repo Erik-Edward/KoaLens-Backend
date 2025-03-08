@@ -7,6 +7,7 @@ import dotenv from 'dotenv';
 import { ANALYSIS_PROMPT, CROPPED_IMAGE_PROMPT } from '@/config/prompts';
 import { validateIngredients } from '@/services/veganValidator';
 import { compressImage, getBase64Size } from '@/utils/imageProcessor';
+import { checkUserLimit, incrementAnalysisCount } from '@/services/supabaseService';
 
 dotenv.config();
 
@@ -41,11 +42,14 @@ interface QualityIssue {
 }
 
 interface StandardError {
-  error: 'IMAGE_QUALITY' | 'ANALYSIS_ERROR' | 'IMAGE_MISSING';
+  error: 'IMAGE_QUALITY' | 'ANALYSIS_ERROR' | 'IMAGE_MISSING' | 'USAGE_LIMIT_EXCEEDED';
   message: string;
   details?: {
     issues?: string[];
     suggestions?: string[];
+    analysesUsed?: number;
+    analysesLimit?: number;
+    isPremium?: boolean;
   };
 }
 
@@ -53,6 +57,7 @@ interface AnalyzeRequestBody {
   image: string;
   isOfflineAnalysis?: boolean;
   isCroppedImage?: boolean;
+  userId?: string; // Ny parameter för att spåra användargränser
 }
 
 function extractLastJsonFromText(text: string): ClaudeAnalysisResult {
@@ -250,7 +255,7 @@ function getUserFriendlyError(error: unknown): StandardError {
 const analyzeImage: RequestHandler = async (req, res) => {
   try {
     console.log('Received analyze request');
-    const { image, isCroppedImage } = req.body as AnalyzeRequestBody;
+    const { image, isCroppedImage, userId } = req.body as AnalyzeRequestBody;
     
     if (!image) {
       console.log('No image provided in request');
@@ -261,11 +266,32 @@ const analyzeImage: RequestHandler = async (req, res) => {
           suggestions: ['Vänligen försök igen']
         }
       } as StandardError);
-      return;
+      return; // Bara return, inte return res...
     }
 
+    // Om userId tillhandahålls, kontrollera användningsgränsen
+    if (userId) {
+      console.log('Checking usage limit for user:', userId);
+      const userLimit = await checkUserLimit(userId);
+      
+      if (!userLimit.hasRemainingAnalyses) {
+        console.log('User has reached usage limit:', userId);
+        res.status(403).json({
+          error: 'USAGE_LIMIT_EXCEEDED',
+          message: 'Du har nått din månatliga gräns för analyser.',
+          details: {
+            analysesUsed: userLimit.analysesUsed,
+            analysesLimit: userLimit.analysesLimit,
+            isPremium: userLimit.isPremium
+          }
+        });
+        return; // Bara return, inte return res...
+      }
+    }
+    
     console.log('Processing image...', {
-      isCropped: isCroppedImage
+      isCropped: isCroppedImage,
+      hasUserId: !!userId
     });
     
     let base64Data: string;
@@ -353,7 +379,7 @@ const analyzeImage: RequestHandler = async (req, res) => {
           'Texten i bilden är otydlig. Försök ta en ny bild med bättre ljus.' :
           'Bilden behöver vara tydligare för en säker analys'
       }]));
-      return;
+      return; // Bara return, inte return res...
     }
 
     const combinedNonVeganIngredients = new Set([
@@ -369,6 +395,17 @@ const analyzeImage: RequestHandler = async (req, res) => {
       reasoning: `${claudeResult.reasoning}\n\n${validationResult.reasoning}`
     };
 
+    // Efter lyckad analys, öka användningsantalet om userId tillhandahålls
+    if (userId) {
+      try {
+        await incrementAnalysisCount(userId);
+        console.log('Incremented analysis count for user:', userId);
+      } catch (error) {
+        console.error('Failed to increment analysis count:', error);
+        // Fortsätt med svaret även om spårningen misslyckas
+      }
+    }
+
     console.log('Sending final result:', finalResult);
     res.json(finalResult);
 
@@ -381,7 +418,32 @@ const analyzeImage: RequestHandler = async (req, res) => {
 
 app.post('/analyze', analyzeImage);
 
-const PORT = process.env.PORT || 3000;
+// Lägg till en ny endpoint för att kontrollera användarens användningsstatus
+app.get('/usage/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    // Validera JWT-token skulle göras här i en fullständig implementation
+    // För MVP, vi förenklar genom att endast kräva användar-ID
+    
+    const usageInfo = await checkUserLimit(userId);
+    
+    res.json({
+      analysesUsed: usageInfo.analysesUsed,
+      analysesLimit: usageInfo.analysesLimit,
+      remaining: usageInfo.isPremium ? Infinity : Math.max(0, usageInfo.analysesLimit - usageInfo.analysesUsed),
+      isPremium: usageInfo.isPremium
+    });
+  } catch (error) {
+    console.error('Error fetching usage info:', error);
+    res.status(500).json({
+      error: 'SERVER_ERROR',
+      message: 'Ett fel uppstod när användardata hämtades'
+    });
+  }
+});
+
+const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
