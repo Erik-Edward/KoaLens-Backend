@@ -1,5 +1,5 @@
 // src/server.ts
-import 'module-alias/register';
+// Ta bort denna import: import 'module-alias/register';
 import express, { RequestHandler } from 'express';
 import cors from 'cors';
 import { Anthropic } from '@anthropic-ai/sdk';
@@ -8,6 +8,7 @@ import { ANALYSIS_PROMPT, CROPPED_IMAGE_PROMPT } from '@/config/prompts';
 import { validateIngredients } from '@/services/veganValidator';
 import { compressImage, getBase64Size } from '@/utils/imageProcessor';
 import { checkUserLimit, incrementAnalysisCount } from '@/services/supabaseService';
+import { supabase } from '@/services/supabaseService';
 
 dotenv.config();
 
@@ -34,6 +35,13 @@ interface IngredientAnalysisResult {
   nonVeganIngredients: string[];
   allIngredients: string[];
   reasoning: string;
+  usageUpdated?: boolean;
+  usageInfo?: {
+    analysesUsed: number;
+    analysesLimit: number;
+    remaining: number;
+    isPremium?: boolean;
+  };
 }
 
 interface QualityIssue {
@@ -57,7 +65,7 @@ interface AnalyzeRequestBody {
   image: string;
   isOfflineAnalysis?: boolean;
   isCroppedImage?: boolean;
-  userId?: string; // Ny parameter för att spåra användargränser
+  userId?: string; // Parameter för att spåra användargränser
 }
 
 function extractLastJsonFromText(text: string): ClaudeAnalysisResult {
@@ -266,27 +274,41 @@ const analyzeImage: RequestHandler = async (req, res) => {
           suggestions: ['Vänligen försök igen']
         }
       } as StandardError);
-      return; // Bara return, inte return res...
+      return;
     }
 
     // Om userId tillhandahålls, kontrollera användningsgränsen
     if (userId) {
       console.log('Checking usage limit for user:', userId);
-      const userLimit = await checkUserLimit(userId);
-      
-      if (!userLimit.hasRemainingAnalyses) {
-        console.log('User has reached usage limit:', userId);
-        res.status(403).json({
-          error: 'USAGE_LIMIT_EXCEEDED',
-          message: 'Du har nått din månatliga gräns för analyser.',
-          details: {
-            analysesUsed: userLimit.analysesUsed,
-            analysesLimit: userLimit.analysesLimit,
-            isPremium: userLimit.isPremium
-          }
+      try {
+        const userLimit = await checkUserLimit(userId);
+        console.log('User limit check result:', {
+          userId, 
+          analysesUsed: userLimit.analysesUsed, 
+          analysesLimit: userLimit.analysesLimit, 
+          hasRemainingAnalyses: userLimit.hasRemainingAnalyses,
+          isPremium: userLimit.isPremium
         });
-        return; // Bara return, inte return res...
+        
+        if (!userLimit.hasRemainingAnalyses) {
+          console.log('User has reached usage limit:', userId);
+          res.status(403).json({
+            error: 'USAGE_LIMIT_EXCEEDED',
+            message: 'Du har nått din månatliga gräns för analyser.',
+            details: {
+              analysesUsed: userLimit.analysesUsed,
+              analysesLimit: userLimit.analysesLimit,
+              isPremium: userLimit.isPremium
+            }
+          });
+          return;
+        }
+      } catch (error) {
+        console.error('Error checking user limit:', error);
+        console.error('Stack trace:', error instanceof Error ? error.stack : 'No stack trace');
       }
+    } else {
+      console.warn('No user ID provided in analysis request');
     }
     
     console.log('Processing image...', {
@@ -379,7 +401,7 @@ const analyzeImage: RequestHandler = async (req, res) => {
           'Texten i bilden är otydlig. Försök ta en ny bild med bättre ljus.' :
           'Bilden behöver vara tydligare för en säker analys'
       }]));
-      return; // Bara return, inte return res...
+      return;
     }
 
     const combinedNonVeganIngredients = new Set([
@@ -398,11 +420,20 @@ const analyzeImage: RequestHandler = async (req, res) => {
     // Efter lyckad analys, öka användningsantalet om userId tillhandahålls
     if (userId) {
       try {
-        await incrementAnalysisCount(userId);
-        console.log('Incremented analysis count for user:', userId);
+        console.log('Incrementing analysis count for user:', userId);
+        const result = await incrementAnalysisCount(userId);
+        console.log('Analysis count incremented:', result);
+        
+        finalResult.usageUpdated = true;
+        finalResult.usageInfo = {
+          analysesUsed: result.analysesUsed,
+          analysesLimit: result.analysesLimit,
+          remaining: result.analysesLimit - result.analysesUsed
+        };
       } catch (error) {
         console.error('Failed to increment analysis count:', error);
-        // Fortsätt med svaret även om spårningen misslyckas
+        console.error('Stack trace:', error instanceof Error ? error.stack : 'No stack trace');
+        // Continue with response even if tracking fails
       }
     }
 
@@ -439,6 +470,166 @@ app.get('/usage/:userId', async (req, res) => {
     res.status(500).json({
       error: 'SERVER_ERROR',
       message: 'Ett fel uppstod när användardata hämtades'
+    });
+  }
+});
+
+// Lägg till en testroute för att verifiera att API:t fungerar
+app.get('/', (_req, res) => {  // Observera underscore-prefixet för oanvänd parameter
+  res.json({
+    status: 'ok',
+    message: 'KoaLens API is running',
+    environment: process.env.NODE_ENV || 'development',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Testendpoint för Supabase-anslutning
+app.get('/test-supabase', async (_req, res) => {
+  try {
+    const { supabase } = await import('@/services/supabaseService');
+    const { data, error } = await supabase
+      .from('user_usage')
+      .select('count(*)')
+      .single();
+    
+    if (error) {
+      console.error('Supabase connection test error:', error);
+      res.status(500).json({ success: false, error: error.message });
+      return;
+    }
+    
+    res.json({ 
+      success: true, 
+      message: 'Supabase connection successful', 
+      data 
+    });
+  } catch (error) {
+    console.error('Unexpected error testing Supabase:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Unknown error' 
+    });
+  }
+});
+
+// Testroute för användargränser
+app.get('/test-usage/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    // Testa att hämta användningsdata
+    console.log('Test endpoint: Getting usage for user', userId);
+    const usage = await checkUserLimit(userId);
+    console.log('Current usage:', usage);
+    
+    res.json({
+      message: 'Usage tests completed successfully',
+      usage
+    });
+  } catch (error) {
+    console.error('Error in test-usage endpoint:', error);
+    res.status(500).json({
+      error: 'Test failed',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+app.get('/increment-usage/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    console.log('Direct increment endpoint called for user:', userId);
+    
+    // Hoppa över alla kontroller och gå direkt till Supabase
+    const { data, error } = await supabase
+      .from('user_usage')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+    
+    if (error) {
+      console.error('Error fetching user data:', error);
+      
+      // Om användaren inte finns, skapa en ny post
+      if (error.code === 'PGRST116') {
+        console.log('User not found, creating new record');
+        const { data: newUser, error: createError } = await supabase
+          .from('user_usage')
+          .insert([{
+            user_id: userId,
+            analyses_used: 0,
+            analyses_limit: 2,
+            last_reset: new Date().toISOString()
+          }])
+          .select()
+          .single();
+        
+        if (createError) {
+          console.error('Error creating user:', createError);
+          return res.status(500).json({ 
+            error: 'Create failed',
+            message: createError.message 
+          });
+        }
+        
+        console.log('New user created:', newUser);
+        
+        // Uppdatera direkt efter skapande
+        const { data: updateData, error: updateError } = await supabase
+          .from('user_usage')
+          .update({ analyses_used: 1 })
+          .eq('user_id', userId)
+          .select()
+          .single();
+        
+        if (updateError) {
+          console.error('Error updating new user:', updateError);
+          return res.status(500).json({ error: updateError.message });
+        }
+        
+        console.log('New user count incremented:', updateData);
+        
+        return res.json({
+          success: true,
+          oldValue: 0,
+          newValue: 1,
+          message: 'New user created and usage count incremented'
+        });
+      } else {
+        return res.status(500).json({ error: error.message });
+      }
+    }
+    
+    console.log('Current user data before increment:', data);
+    const newCount = (data.analyses_used || 0) + 1;
+    
+    const { data: updateData, error: updateError } = await supabase
+      .from('user_usage')
+      .update({ analyses_used: newCount })
+      .eq('user_id', userId)
+      .select()
+      .single();
+    
+    if (updateError) {
+      console.error('Error updating user count:', updateError);
+      return res.status(500).json({ error: updateError.message });
+    }
+    
+    console.log('User count successfully incremented:', updateData);
+    
+    return res.json({
+      success: true,
+      oldValue: data.analyses_used,
+      newValue: updateData.analyses_used,
+      message: 'Usage count incremented successfully'
+    });
+  } catch (error) {
+    console.error('Direct increment error:', error);
+    res.status(500).json({
+      error: 'Increment failed',
+      message: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });

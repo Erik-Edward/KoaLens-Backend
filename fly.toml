@@ -1,8 +1,4 @@
-# fly.toml app configuration file generated for koalens-backend on 2025-03-06T20:07:21+01:00
-#
-# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
-#
-
+# fly.toml app configuration file
 app = 'koalens-backend'
 primary_region = 'arn'
 

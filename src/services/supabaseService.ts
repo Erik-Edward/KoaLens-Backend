@@ -178,7 +178,7 @@ export async function checkUserLimit(userId: string): Promise<{
     return {
       hasRemainingAnalyses: true,
       analysesUsed: 0,
-      analysesLimit: 15,
+      analysesLimit: 2,
       isPremium: false
     };
   }
