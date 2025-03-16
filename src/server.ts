@@ -378,6 +378,23 @@ const analyzeImage: RequestHandler = async (req, res) => {
     const claudeResult = extractLastJsonFromText(content.text);
     console.log('Parsed Claude result:', claudeResult);
 
+    // VIKTIGT: Korrigera motstridiga Claude-resultat
+    if (claudeResult.reasoning && 
+        claudeResult.reasoning.toLowerCase().includes('vegansk') && 
+        claudeResult.nonVeganIngredients.length === 0) {
+      
+      const reasoningIndicatesVegan = 
+        claudeResult.reasoning.toLowerCase().includes('är vegansk') || 
+        claudeResult.reasoning.toLowerCase().includes('produkten är vegansk');
+      
+      // Om reasoning indikerar vegansk men isVegan är false, korrigera
+      if (reasoningIndicatesVegan && claudeResult.isVegan === false) {
+        console.log('Korrigerar motstridigt Claude-resultat: reasoning säger vegansk men isVegan är false');
+        claudeResult.isVegan = true;
+        claudeResult.confidence = Math.max(claudeResult.confidence, 0.9); // Säkerställ hög confidence
+      }
+    }
+
     // Justera konfidens baserat på om bilden är beskuren
     if (isCroppedImage) {
       claudeResult.confidence = Math.min(1, claudeResult.confidence + 0.1);
