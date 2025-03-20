@@ -10,6 +10,7 @@ interface UserUsage {
   analyses_used: number;
   analyses_limit: number;
   last_updated: string;
+  updated_at?: string; // Lägg till detta fält för att matcha databasen
   is_premium: boolean;
 }
 
@@ -40,6 +41,36 @@ async function logSupabaseRequest(operation: string, query: any) {
   }
 }
 
+// Validera att databasen har rätt kolumnnamn
+export async function validateDbSchema() {
+  try {
+    console.log('Validerar databasschema...');
+    
+    // Testa att köra en enkel SQL-fråga för att hämta kolumnnamn
+    const { data, error } = await supabase
+      .rpc('get_table_columns', { table_name: 'user_analytics' });
+      
+    if (error) {
+      console.error('Fel vid schemavalidering:', error);
+      return false;
+    }
+    
+    console.log('Befintliga kolumner i user_analytics:', data);
+    
+    // Kontrollera om last_updated finns
+    const hasLastUpdated = Array.isArray(data) && data.some(col => col.column_name === 'last_updated');
+    const hasUpdatedAt = Array.isArray(data) && data.some(col => col.column_name === 'updated_at');
+    
+    console.log(`Schema-validering: last_updated=${hasLastUpdated}, updated_at=${hasUpdatedAt}`);
+    
+    return hasLastUpdated;
+  } catch (error) {
+    console.error('Fel vid validering av schema:', error);
+    // Anta att schemat är korrekt om vi inte kan validera
+    return true;
+  }
+}
+
 // Hjälpfunktioner för användningsdata
 export async function getUserUsage(userId: string): Promise<UserUsage> {
   try {
@@ -54,6 +85,7 @@ export async function getUserUsage(userId: string): Promise<UserUsage> {
           analyses_used: 0, 
           analyses_limit: 2, 
           last_updated: new Date().toISOString(),
+          updated_at: new Date().toISOString(), // Lägg till detta fält
           is_premium: false
         },
         { 
@@ -99,6 +131,7 @@ export async function getUserUsage(userId: string): Promise<UserUsage> {
         analyses_limit: typeof firstItem.analyses_limit === 'number' ? firstItem.analyses_limit : 2,
         analyses_used: typeof firstItem.analyses_used === 'number' ? firstItem.analyses_used : 0,
         last_updated: firstItem.last_updated || new Date().toISOString(),
+        updated_at: firstItem.updated_at || new Date().toISOString(),
         is_premium: firstItem.is_premium || false
       };
       return result;
@@ -110,6 +143,7 @@ export async function getUserUsage(userId: string): Promise<UserUsage> {
         analyses_limit: typeof item.analyses_limit === 'number' ? item.analyses_limit : 2,
         analyses_used: typeof item.analyses_used === 'number' ? item.analyses_used : 0,
         last_updated: item.last_updated || new Date().toISOString(),
+        updated_at: item.updated_at || new Date().toISOString(),
         is_premium: item.is_premium || false
       };
       return result;
@@ -122,6 +156,7 @@ export async function getUserUsage(userId: string): Promise<UserUsage> {
       analyses_used: 0,
       analyses_limit: 2,
       last_updated: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
       is_premium: false
     };
   } catch (error) {
@@ -133,6 +168,7 @@ export async function getUserUsage(userId: string): Promise<UserUsage> {
       analyses_used: 0,
       analyses_limit: 2,
       last_updated: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
       is_premium: false
     };
   }
@@ -157,13 +193,15 @@ export async function createUserUsageRecord(userId: string) {
     }
     
     // Skapa bara om användaren inte finns
+    const nowTime = new Date().toISOString();
     const { data, error } = await logSupabaseRequest('CREATE USER', supabase
       .from('user_analytics')
       .insert([{ 
         user_id: userId,
         analyses_used: 0,
         analyses_limit: 2,
-        last_updated: new Date().toISOString(),
+        last_updated: nowTime,
+        updated_at: nowTime,
         is_premium: false
       }])
       .select()
@@ -187,6 +225,7 @@ export async function createUserUsageRecord(userId: string) {
       analyses_used: 0,
       analyses_limit: 2,
       last_updated: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
       is_premium: false
     };
   }
@@ -205,20 +244,79 @@ export async function incrementAnalysisCount(userId: string) {
     
     console.log('Nuvarande analysräknare:', currentCount);
     
-    // Öka räknaren
-    // VIKTIGT: Använd DIREKT UPPDATERING via SQL för ökad pålitlighet
+    const nowTime = new Date().toISOString();
+    
+    // Öka räknaren med DIREKT RPC-ANROP för att kringgå eventuella DB-lås
+    try {
+      const { data: rpcData, error: rpcError } = await logSupabaseRequest('RPC INCREMENT COUNTER', supabase
+        .rpc('increment_analysis_counter', { 
+          user_id_param: userId,
+          current_time: nowTime
+        }));
+
+      if (rpcError) {
+        console.error('RPC-INCREMENT MISSLYCKADES, FORTSÄTTER MED STANDARD UPPDATERING:', rpcError);
+        // Fortsätt med standarduppdatering nedan
+      } else if (rpcData) {
+        console.log('RPC INCREMENT SUCCEEDED:', rpcData);
+        // RPC lyckades, returnera resultatet
+        return { 
+          analysesUsed: typeof rpcData.analyses_used === 'number' ? rpcData.analyses_used : currentCount + 1,
+          analysesLimit: typeof rpcData.analyses_limit === 'number' ? rpcData.analyses_limit : analysesLimit
+        };
+      }
+    } catch (rpcError) {
+      console.error('RPC EXCEPTION, FORTSÄTTER MED STANDARD UPPDATERING:', rpcError);
+      // Fortsätt med standarduppdatering nedan
+    }
+    
+    // Standarduppdatering som fallback (om RPC misslyckades)
+    const updateObject = {
+      analyses_used: currentCount + 1,
+      last_updated: nowTime,
+      updated_at: nowTime
+    };
+    
+    console.log('Uppdaterar analysräknare med standardmetod:', updateObject);
+    
     const { data, error } = await logSupabaseRequest('INCREMENT COUNTER', supabase
       .from('user_analytics')
-      .update({ 
-        analyses_used: currentCount + 1,
-        last_updated: new Date().toISOString()
-      })
+      .update(updateObject)
       .eq('user_id', userId)
       .select()
       .single());
     
     if (error) {
       console.error('FEL VID UPPDATERING AV RÄKNARE:', error);
+      
+      // Försök en gång till med INSERT
+      console.log('Försöker med INSERT istället...');
+      const { data: insertData, error: insertError } = await logSupabaseRequest('INSERT COUNTER FALLBACK', supabase
+        .from('user_analytics')
+        .insert([{ 
+          user_id: userId,
+          analyses_used: currentCount + 1,
+          analyses_limit: analysesLimit,
+          last_updated: nowTime,
+          updated_at: nowTime,
+          is_premium: usage.is_premium || false
+        }])
+        .select()
+        .single());
+        
+      if (insertError) {
+        console.error('INSERT FALLBACK MISSLYCKADES OCKSÅ:', insertError);
+        throw insertError;
+      }
+      
+      if (insertData) {
+        console.log('INSERT FALLBACK LYCKADES:', insertData);
+        return { 
+          analysesUsed: typeof insertData.analyses_used === 'number' ? insertData.analyses_used : currentCount + 1,
+          analysesLimit: typeof insertData.analyses_limit === 'number' ? insertData.analyses_limit : analysesLimit
+        };
+      }
+      
       throw error;
     }
     
@@ -237,6 +335,29 @@ export async function incrementAnalysisCount(userId: string) {
         föreÖkning: currentCount,
         efterÖkning: updatedCount
       });
+      
+      // Force-update to ensure it increases
+      console.log('Försöker genomföra en force-update av räknaren...');
+      const { data: forceData, error: forceError } = await logSupabaseRequest('FORCE INCREMENT COUNTER', supabase
+        .from('user_analytics')
+        .update({ 
+          analyses_used: currentCount + 1,  // Force-set the value
+          last_updated: nowTime,
+          updated_at: nowTime
+        })
+        .eq('user_id', userId)
+        .select()
+        .single());
+        
+      if (forceError) {
+        console.error('FORCE-UPDATE MISSLYCKADES:', forceError);
+      } else if (forceData) {
+        console.log('FORCE-UPDATE LYCKADES:', forceData);
+        return { 
+          analysesUsed: typeof forceData.analyses_used === 'number' ? forceData.analyses_used : currentCount + 1,
+          analysesLimit: typeof forceData.analyses_limit === 'number' ? forceData.analyses_limit : analysesLimit
+        };
+      }
     }
     
     console.log('Användningsgräns uppdaterad:', {
@@ -274,6 +395,7 @@ export async function checkUserLimit(userId: string): Promise<{
         analyses_used: 0,
         analyses_limit: 2,
         last_updated: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
         is_premium: false
       };
     }
