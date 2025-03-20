@@ -9,12 +9,16 @@ import { validateIngredients } from '@/services/veganValidator';
 import { compressImage, getBase64Size } from '@/utils/imageProcessor';
 import { checkUserLimit, incrementAnalysisCount } from '@/services/supabaseService';
 import { supabase } from '@/services/supabaseService';
+import apiRoutes from './routes';
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
+
+// Använd nya API-routes under /api path
+app.use('/api', apiRoutes);
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY
@@ -491,112 +495,6 @@ app.get('/usage/:userId', async (req, res) => {
   }
 });
 
-// Lägg till en ny endpoint för att direkt öka användningsräknaren (för testning)
-const incrementUsageHandler: RequestHandler = async (req, res) => {
-  try {
-    const { userId } = req.params;
-    
-    console.log('Direct increment endpoint called for user:', userId);
-    
-    // Hoppa över alla kontroller och gå direkt till Supabase
-    const { data, error } = await supabase
-      .from('user_usage')
-      .select('*')
-      .eq('user_id', userId)
-      .single();
-    
-    if (error) {
-      console.error('Error fetching user data:', error);
-      
-      // Om användaren inte finns, skapa en ny post
-      if (error.code === 'PGRST116') {
-        console.log('User not found, creating new record');
-        const { data: newUser, error: createError } = await supabase
-          .from('user_usage')
-          .insert([{
-            user_id: userId,
-            analyses_used: 0,
-            analyses_limit: 2,
-            last_reset: new Date().toISOString()
-          }])
-          .select()
-          .single();
-        
-        if (createError) {
-          console.error('Error creating user:', createError);
-          res.status(500).json({ 
-            error: 'Create failed',
-            message: createError.message 
-          });
-          return;
-        }
-        
-        console.log('New user created:', newUser);
-        
-        // Uppdatera direkt efter skapande
-        const { data: updateData, error: updateError } = await supabase
-          .from('user_usage')
-          .update({ analyses_used: 1 })
-          .eq('user_id', userId)
-          .select()
-          .single();
-        
-        if (updateError) {
-          console.error('Error updating new user:', updateError);
-          res.status(500).json({ error: updateError.message });
-          return;
-        }
-        
-        console.log('New user count incremented:', updateData);
-        
-        res.json({
-          success: true,
-          oldValue: 0,
-          newValue: 1,
-          message: 'New user created and usage count incremented'
-        });
-        return;
-      } else {
-        res.status(500).json({ error: error.message });
-        return;
-      }
-    }
-    
-    console.log('Current user data before increment:', data);
-    const newCount = (data.analyses_used || 0) + 1;
-    
-    const { data: updateData, error: updateError } = await supabase
-      .from('user_usage')
-      .update({ analyses_used: newCount })
-      .eq('user_id', userId)
-      .select()
-      .single();
-    
-    if (updateError) {
-      console.error('Error updating user count:', updateError);
-      res.status(500).json({ error: updateError.message });
-      return;
-    }
-    
-    console.log('User count successfully incremented:', updateData);
-    
-    res.json({
-      success: true,
-      oldValue: data.analyses_used,
-      newValue: updateData.analyses_used,
-      message: 'Usage count incremented successfully'
-    });
-  } catch (error) {
-    console.error('Direct increment error:', error);
-    res.status(500).json({
-      error: 'Increment failed',
-      message: error instanceof Error ? error.message : 'Unknown error'
-    });
-  }
-};
-
-app.get('/increment-usage/:userId', incrementUsageHandler);
-
 // Lägg till en testroute för att verifiera att API:t fungerar
 app.get('/', (_req, res) => {  // Observera underscore-prefixet för oanvänd parameter
   res.json({
@@ -636,22 +534,16 @@ app.get('/test-supabase', async (_req, res) => {
   }
 });
 
-// Testroute för användargränser
-app.get('/test-usage/:userId', async (req, res) => {
+// Testroute för counter-endpoints
+app.get('/test-counter/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
+    const counterName = 'analysis_count';
     
-    // Testa att hämta användningsdata
-    console.log('Test endpoint: Getting usage for user', userId);
-    const usage = await checkUserLimit(userId);
-    console.log('Current usage:', usage);
-    
-    res.json({
-      message: 'Usage tests completed successfully',
-      usage
-    });
+    // Omdirigera till nya counter-API
+    res.redirect(`/api/counters/${userId}/${counterName}`);
   } catch (error) {
-    console.error('Error in test-usage endpoint:', error);
+    console.error('Error in test-counter endpoint:', error);
     res.status(500).json({
       error: 'Test failed',
       message: error instanceof Error ? error.message : 'Unknown error'
