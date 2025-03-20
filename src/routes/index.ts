@@ -1,5 +1,5 @@
 // src/routes/index.ts
-import express from 'express';
+import express, { Request, Response } from 'express';
 import counterRoutes from './counterRoutes';
 
 const router = express.Router();
@@ -11,7 +11,7 @@ router.use('/counters', counterRoutes);
 // t.ex. router.use('/products', productRoutes);
 
 // Hälsokontroll
-router.get('/health', (req, res) => {
+router.get('/health', (_req: Request, res: Response) => {
   res.status(200).json({ status: 'OK', message: 'API is running' });
 });
 
