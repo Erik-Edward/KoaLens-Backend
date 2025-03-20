@@ -500,7 +500,7 @@ const incrementUsageHandler: RequestHandler = async (req, res) => {
     
     // Hoppa över alla kontroller och gå direkt till Supabase
     const { data, error } = await supabase
-      .from('user_usage')
+      .from('user_analytics') // ÄNDRA: user_usage -> user_analytics
       .select('*')
       .eq('user_id', userId)
       .single();
@@ -512,12 +512,12 @@ const incrementUsageHandler: RequestHandler = async (req, res) => {
       if (error.code === 'PGRST116') {
         console.log('User not found, creating new record');
         const { data: newUser, error: createError } = await supabase
-          .from('user_usage')
+          .from('user_analytics') // ÄNDRA: user_usage -> user_analytics
           .insert([{
             user_id: userId,
             analyses_used: 0,
             analyses_limit: 2,
-            last_reset: new Date().toISOString()
+            last_updated: new Date().toISOString() // ÄNDRA: last_reset -> last_updated
           }])
           .select()
           .single();
@@ -535,7 +535,7 @@ const incrementUsageHandler: RequestHandler = async (req, res) => {
         
         // Uppdatera direkt efter skapande
         const { data: updateData, error: updateError } = await supabase
-          .from('user_usage')
+          .from('user_analytics') // ÄNDRA: user_usage -> user_analytics
           .update({ analyses_used: 1 })
           .eq('user_id', userId)
           .select()
@@ -566,7 +566,7 @@ const incrementUsageHandler: RequestHandler = async (req, res) => {
     const newCount = (data.analyses_used || 0) + 1;
     
     const { data: updateData, error: updateError } = await supabase
-      .from('user_usage')
+      .from('user_analytics') // ÄNDRA: user_usage -> user_analytics
       .update({ analyses_used: newCount })
       .eq('user_id', userId)
       .select()
@@ -612,7 +612,7 @@ app.get('/test-supabase', async (_req, res) => {
   try {
     const { supabase } = await import('@/services/supabaseService');
     const { data, error } = await supabase
-      .from('user_usage')
+      .from('user_analytics') // ÄNDRA: user_usage -> user_analytics
       .select('count(*)')
       .single();
     
