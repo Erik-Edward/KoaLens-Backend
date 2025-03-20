@@ -1,5 +1,5 @@
 // src/routes/counterRoutes.ts
-import express, { Request, Response } from 'express';
+import express, { Request, Response, RequestHandler } from 'express';
 import { getCounter, incrementCounter, checkCounterLimit } from '../services/counterService';
 
 const router = express.Router();
@@ -8,7 +8,7 @@ const router = express.Router();
  * Hämta en räknare för en användare
  * GET /api/counters/:userId/:counterName
  */
-router.get('/:userId/:counterName', async (req: Request, res: Response) => {
+router.get('/:userId/:counterName', (async (req: Request, res: Response) => {
   try {
     const { userId, counterName } = req.params;
     
@@ -28,13 +28,13 @@ router.get('/:userId/:counterName', async (req: Request, res: Response) => {
       message: 'Ett fel uppstod vid hämtning av räknare'
     });
   }
-});
+}) as RequestHandler);
 
 /**
  * Öka en räknare för en användare
  * POST /api/counters/:userId/:counterName/increment
  */
-router.post('/:userId/:counterName/increment', async (req: Request, res: Response) => {
+router.post('/:userId/:counterName/increment', (async (req: Request, res: Response) => {
   try {
     const { userId, counterName } = req.params;
     const { increment = 1 } = req.body;
@@ -55,13 +55,13 @@ router.post('/:userId/:counterName/increment', async (req: Request, res: Respons
       message: 'Ett fel uppstod vid ökning av räknare'
     });
   }
-});
+}) as RequestHandler);
 
 /**
  * Kontrollera om en användare har nått sin räknargräns
  * GET /api/counters/:userId/:counterName/limit
  */
-router.get('/:userId/:counterName/limit', async (req: Request, res: Response) => {
+router.get('/:userId/:counterName/limit', (async (req: Request, res: Response) => {
   try {
     const { userId, counterName } = req.params;
     
@@ -81,6 +81,6 @@ router.get('/:userId/:counterName/limit', async (req: Request, res: Response) =>
       message: 'Ett fel uppstod vid kontroll av räknargräns'
     });
   }
-});
+}) as RequestHandler);
 
 export default router;
