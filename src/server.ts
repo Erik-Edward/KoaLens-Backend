@@ -8,7 +8,8 @@ import { ANALYSIS_PROMPT, CROPPED_IMAGE_PROMPT } from '@/config/prompts';
 import { validateIngredients } from '@/services/veganValidator';
 import { compressImage, getBase64Size } from '@/utils/imageProcessor';
 import { checkUserLimit, incrementAnalysisCount } from '@/services/supabaseService';
-import { supabase } from '@/services/supabaseService';
+// Importera endast när det behövs i faktisk kod
+// import { supabase } from '@/services/supabaseService';
 import apiRoutes from './routes';
 
 dotenv.config();
