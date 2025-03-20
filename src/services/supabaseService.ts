@@ -23,21 +23,38 @@ if (!supabaseUrl || !supabaseServiceKey) {
 // Skapa en Supabase-klient med service role key för backend-operationer
 export const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+// Debugloggare för Supabase-anrop
+async function logSupabaseRequest(operation: string, query: any) {
+  console.log(`[SUPABASE REQUEST] ${operation}: Starting`);
+  try {
+    const { data, error } = await query;
+    if (error) {
+      console.error(`[SUPABASE REQUEST] ${operation}: ERROR`, error);
+    } else {
+      console.log(`[SUPABASE REQUEST] ${operation}: SUCCESS`, data);
+    }
+    return { data, error };
+  } catch (error) {
+    console.error(`[SUPABASE REQUEST] ${operation}: EXCEPTION`, error);
+    throw error;
+  }
+}
+
 // Hjälpfunktioner för användningsdata
 export async function getUserUsage(userId: string): Promise<UserUsage> {
   try {
     console.log('Hämtar användardata för:', userId);
     
     // Försök skapa användaren först med upsert
-    const { data, error } = await supabase
+    const { data, error } = await logSupabaseRequest('UPSERT USER', supabase
       .from('user_analytics') // Ändrad från user_usage
       .upsert(
         { 
           user_id: userId,
-          analyses_used: 0, // Ändrad från analyses_used
-          analyses_limit: 2, // Ändrad från analyses_limit
-          last_updated: new Date().toISOString(), // Ändrad från last_reset
-          is_premium: false // Tillagt is_premium
+          analyses_used: 0, 
+          analyses_limit: 2, 
+          last_updated: new Date().toISOString(),
+          is_premium: false
         },
         { 
           onConflict: 'user_id',
@@ -45,18 +62,18 @@ export async function getUserUsage(userId: string): Promise<UserUsage> {
           ignoreDuplicates: false 
         }
       )
-      .select('*');
+      .select('*'));
     
     // Hantera resultatet från upsert
     if (error) {
       console.error('Fel vid upsert av användardata:', error);
       
       // Fallback: Försök hämta användaren direkt
-      const { data: selectData, error: selectError } = await supabase
-        .from('user_analytics') // Ändrad från user_usage
+      const { data: selectData, error: selectError } = await logSupabaseRequest('SELECT USER FALLBACK', supabase
+        .from('user_analytics')
         .select('*')
         .eq('user_id', userId)
-        .maybeSingle();
+        .maybeSingle());
         
       if (selectError) {
         console.error('Fallback-hämtning misslyckades också:', selectError);
@@ -128,11 +145,11 @@ export async function createUserUsageRecord(userId: string) {
     console.log('Skapar användardata för:', userId);
     
     // Kontrollera först om användaren redan finns för att undvika duplikat
-    const { data: existingUser } = await supabase
-      .from('user_analytics') // Ändrad från user_usage
+    const { data: existingUser } = await logSupabaseRequest('CHECK USER EXISTS', supabase
+      .from('user_analytics')
       .select('user_id')
       .eq('user_id', userId)
-      .maybeSingle();
+      .maybeSingle());
     
     if (existingUser) {
       console.log('Användare finns redan:', userId);
@@ -140,8 +157,8 @@ export async function createUserUsageRecord(userId: string) {
     }
     
     // Skapa bara om användaren inte finns
-    const { data, error } = await supabase
-      .from('user_analytics') // Ändrad från user_usage
+    const { data, error } = await logSupabaseRequest('CREATE USER', supabase
+      .from('user_analytics')
       .insert([{ 
         user_id: userId,
         analyses_used: 0,
@@ -150,7 +167,7 @@ export async function createUserUsageRecord(userId: string) {
         is_premium: false
       }])
       .select()
-      .single();
+      .single());
     
     if (error) {
       // Om det är ett duplicate key-fel, försök hämta användaren istället
@@ -177,6 +194,8 @@ export async function createUserUsageRecord(userId: string) {
 
 export async function incrementAnalysisCount(userId: string) {
   try {
+    console.log('*** FÖRSÖKER ÖKA ANALYSRÄKNAREN FÖR ANVÄNDARE:', userId);
+    
     // Hämta befintlig användardata med de förbättrade funktionerna
     let usage = await getUserUsage(userId);
     
@@ -184,22 +203,41 @@ export async function incrementAnalysisCount(userId: string) {
     const currentCount = typeof usage.analyses_used === 'number' ? usage.analyses_used : 0;
     const analysesLimit = typeof usage.analyses_limit === 'number' ? usage.analyses_limit : 2;
     
+    console.log('Nuvarande analysräknare:', currentCount);
+    
     // Öka räknaren
-    const { data, error } = await supabase
-      .from('user_analytics') // Ändrad från user_usage
+    // VIKTIGT: Använd DIREKT UPPDATERING via SQL för ökad pålitlighet
+    const { data, error } = await logSupabaseRequest('INCREMENT COUNTER', supabase
+      .from('user_analytics')
       .update({ 
         analyses_used: currentCount + 1,
         last_updated: new Date().toISOString()
       })
       .eq('user_id', userId)
       .select()
-      .single();
+      .single());
     
-    if (error) throw error;
+    if (error) {
+      console.error('FEL VID UPPDATERING AV RÄKNARE:', error);
+      throw error;
+    }
+    
+    if (!data) {
+      console.error('INGEN DATA RETURNERADES FRÅN UPPDATERING');
+      throw new Error('Uppdateringen returnerade ingen data');
+    }
     
     // Säkerställ att de returnerade värdena är korrekta
     const updatedCount = typeof data.analyses_used === 'number' ? data.analyses_used : currentCount + 1;
     const updatedLimit = typeof data.analyses_limit === 'number' ? data.analyses_limit : analysesLimit;
+    
+    // Verifiera att räknaren faktiskt ökades
+    if (updatedCount <= currentCount) {
+      console.warn('VARNING: Räknaren ökades inte som förväntat:', {
+        föreÖkning: currentCount,
+        efterÖkning: updatedCount
+      });
+    }
     
     console.log('Användningsgräns uppdaterad:', {
       userId,
