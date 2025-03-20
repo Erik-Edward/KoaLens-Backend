@@ -9,9 +9,8 @@ interface UserUsage {
   user_id: string;
   analyses_used: number;
   analyses_limit: number;
-  last_reset: string;
-  premium_until: string | null;
-  reset_day?: number;
+  last_updated: string;
+  is_premium: boolean;
 }
 
 const supabaseUrl = process.env.SUPABASE_URL as string;
@@ -31,13 +30,14 @@ export async function getUserUsage(userId: string): Promise<UserUsage> {
     
     // Försök skapa användaren först med upsert
     const { data, error } = await supabase
-      .from('user_usage')
+      .from('user_analytics') // Ändrad från user_usage
       .upsert(
         { 
           user_id: userId,
-          analyses_used: 0,
-          analyses_limit: 2, // Explicit standardvärde
-          last_reset: new Date().toISOString()
+          analyses_used: 0, // Ändrad från analyses_used
+          analyses_limit: 2, // Ändrad från analyses_limit
+          last_updated: new Date().toISOString(), // Ändrad från last_reset
+          is_premium: false // Tillagt is_premium
         },
         { 
           onConflict: 'user_id',
@@ -53,7 +53,7 @@ export async function getUserUsage(userId: string): Promise<UserUsage> {
       
       // Fallback: Försök hämta användaren direkt
       const { data: selectData, error: selectError } = await supabase
-        .from('user_usage')
+        .from('user_analytics') // Ändrad från user_usage
         .select('*')
         .eq('user_id', userId)
         .maybeSingle();
@@ -81,9 +81,8 @@ export async function getUserUsage(userId: string): Promise<UserUsage> {
         user_id: firstItem.user_id || userId,
         analyses_limit: typeof firstItem.analyses_limit === 'number' ? firstItem.analyses_limit : 2,
         analyses_used: typeof firstItem.analyses_used === 'number' ? firstItem.analyses_used : 0,
-        last_reset: firstItem.last_reset || new Date().toISOString(),
-        premium_until: firstItem.premium_until || null,
-        reset_day: firstItem.reset_day
+        last_updated: firstItem.last_updated || new Date().toISOString(),
+        is_premium: firstItem.is_premium || false
       };
       return result;
     } else if (data) {
@@ -93,9 +92,8 @@ export async function getUserUsage(userId: string): Promise<UserUsage> {
         user_id: item.user_id || userId,
         analyses_limit: typeof item.analyses_limit === 'number' ? item.analyses_limit : 2,
         analyses_used: typeof item.analyses_used === 'number' ? item.analyses_used : 0,
-        last_reset: item.last_reset || new Date().toISOString(),
-        premium_until: item.premium_until || null,
-        reset_day: item.reset_day
+        last_updated: item.last_updated || new Date().toISOString(),
+        is_premium: item.is_premium || false
       };
       return result;
     }
@@ -106,8 +104,8 @@ export async function getUserUsage(userId: string): Promise<UserUsage> {
       user_id: userId,
       analyses_used: 0,
       analyses_limit: 2,
-      last_reset: new Date().toISOString(),
-      premium_until: null
+      last_updated: new Date().toISOString(),
+      is_premium: false
     };
   } catch (error) {
     console.error('Fel vid hantering av användardata:', error);
@@ -117,8 +115,8 @@ export async function getUserUsage(userId: string): Promise<UserUsage> {
       user_id: userId,
       analyses_used: 0,
       analyses_limit: 2,
-      last_reset: new Date().toISOString(),
-      premium_until: null
+      last_updated: new Date().toISOString(),
+      is_premium: false
     };
   }
 }
@@ -131,7 +129,7 @@ export async function createUserUsageRecord(userId: string) {
     
     // Kontrollera först om användaren redan finns för att undvika duplikat
     const { data: existingUser } = await supabase
-      .from('user_usage')
+      .from('user_analytics') // Ändrad från user_usage
       .select('user_id')
       .eq('user_id', userId)
       .maybeSingle();
@@ -143,12 +141,13 @@ export async function createUserUsageRecord(userId: string) {
     
     // Skapa bara om användaren inte finns
     const { data, error } = await supabase
-      .from('user_usage')
+      .from('user_analytics') // Ändrad från user_usage
       .insert([{ 
         user_id: userId,
         analyses_used: 0,
         analyses_limit: 2,
-        last_reset: new Date().toISOString()
+        last_updated: new Date().toISOString(),
+        is_premium: false
       }])
       .select()
       .single();
@@ -170,7 +169,8 @@ export async function createUserUsageRecord(userId: string) {
       user_id: userId,
       analyses_used: 0,
       analyses_limit: 2,
-      last_reset: new Date().toISOString()
+      last_updated: new Date().toISOString(),
+      is_premium: false
     };
   }
 }
@@ -186,9 +186,10 @@ export async function incrementAnalysisCount(userId: string) {
     
     // Öka räknaren
     const { data, error } = await supabase
-      .from('user_usage')
+      .from('user_analytics') // Ändrad från user_usage
       .update({ 
-        analyses_used: currentCount + 1 
+        analyses_used: currentCount + 1,
+        last_updated: new Date().toISOString()
       })
       .eq('user_id', userId)
       .select()
@@ -234,45 +235,13 @@ export async function checkUserLimit(userId: string): Promise<{
         user_id: userId,
         analyses_used: 0,
         analyses_limit: 2,
-        last_reset: new Date().toISOString(),
-        premium_until: null
+        last_updated: new Date().toISOString(),
+        is_premium: false
       };
     }
     
     // Kontrollera om användaren är premium
-    const isPremium = usage.premium_until ? new Date(usage.premium_until) > new Date() : false;
-    
-    // Kontrollera om vi behöver återställa räknaren (ny månad)
-    const resetDay = usage.reset_day || 1;
-    const lastReset = new Date(usage.last_reset);
-    const now = new Date();
-    const shouldReset = (
-      now.getMonth() !== lastReset.getMonth() || 
-      now.getFullYear() !== lastReset.getFullYear()
-    ) && now.getDate() >= resetDay;
-    
-    if (shouldReset) {
-      // Återställ räknaren för ny månad
-      const { error } = await supabase
-        .from('user_usage')
-        .update({ 
-          analyses_used: 0,
-          last_reset: new Date().toISOString() 
-        })
-        .eq('user_id', userId);
-      
-      if (error) {
-        console.error('Fel vid återställning av räknare:', error);
-        // Fortsätt med befintliga värden om uppdateringen misslyckas
-      }
-      
-      return {
-        hasRemainingAnalyses: true,
-        analysesUsed: 0,
-        analysesLimit: usage.analyses_limit,
-        isPremium
-      };
-    }
+    const isPremium = usage.is_premium || false;
     
     // Premium-användare har ingen gräns
     if (isPremium) {
