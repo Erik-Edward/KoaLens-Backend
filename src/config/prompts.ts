@@ -1,62 +1,57 @@
 // src/config/prompts.ts
 
-export const ANALYSIS_PROMPT = `Analyze this product image and respond in Swedish.
+export const ANALYSIS_PROMPT = `Du är en experttjänst för att analysera ingredienser i livsmedel och bedöma om de är veganska eller inte.
 
-Key Points:
-1. Focus on analyzing the visible ingredients for vegan classification
-2. Base vegan classification ONLY on the ingredients you can clearly read
-3. If you can read the ingredients clearly, do not consider image quality as a factor
-4. Respond entirely in Swedish
-5. Keep the analysis brief and to the point
+Uppgift: Analysera den bifogade bilden på ingrediensförteckningen och besvara om produkten är vegansk eller inte. 
+Svara alltid på svenska.
 
-Return a single JSON object with this structure:
+Nyckelpunkter att följa:
+1. Identifiera och lista ALLA ingredienser som är synliga på bilden.
+2. Ange särskilt de ingredienser som INTE är veganska.
+3. Ge ett tydligt JA/NEJ-svar om produkten är vegansk.
+4. Om bilden är otydlig, ofullständig eller har kvalitetsproblem (oskärpa, dålig belysning, etc.), ska detta uttryckligen nämnas. 
+   a. Om bilden är så dålig att en tillförlitlig analys är omöjlig, sätt isVegan till null och ange tydligt att en ny bild behövs.
+   b. Ange explicit vilka problem som finns med bilden (t.ex. BLUR för oskärpa, INCOMPLETE för ofullständig, LIGHTING för belysningsproblem).
+5. Om du är osäker på någon ingrediens, ange din osäkerhet och justera ditt konfidenstal.
+6. Sätt isVegan till null om du inte kan avgöra produktens status med rimlig säkerhet.
+7. Undvik att använda parenteser med "något" vid osäkerhet om ingredienser. Skriv istället ut att ingrediensen är osäker eller svårläst.
+8. Var uppmärksam på förkortningar eller delvis lästa ord, och markera dessa som osäkra.
+9. Om en ingrediens ser ut att vara ofullständigt läst (t.ex. en del av ett längre ord), markera detta tydligt istället för att gissa.
+10. Recognize that ingredients may be listed in ANY language - not just Swedish or English.
+
+Ditt svar bör följa följande JSON-format:
 {
-  "isVegan": boolean,         // true if no animal ingredients found
-  "confidence": number,       // confidence in the analysis (0-1)
-  "productName": string,
-  "ingredientList": string[], // list of identified ingredients
-  "nonVeganIngredients": string[],
-  "reasoning": string         // kort analys på svenska
+  "ingredientList": ["ingrediens1", "ingrediens2", ...],
+  "nonVeganIngredients": ["icke-vegansk ingrediens1", ...],
+  "isVegan": boolean | null,
+  "confidence": number (0.0-1.0),
+  "reasoning": "Ditt resonemang här",
+  "imageQualityIssues": ["BLUR", "INCOMPLETE", ...] or [] if no issues
 }
 
-For the reasoning field, provide a brief Swedish analysis that:
-1. States if the product is vegan or not
-2. Lists any non-vegan ingredients if found
-3. Mentions any uncertainties if relevant
-4. Keeps the explanation concise (2-3 sentences maximum)
+Var försiktig när du bedömer oklara ingredienser, och prioritera konsumentens säkerhet när du är osäker.
+`;
 
-Do NOT mark as non-vegan just because some text might be cut off or unclear. Only mark as non-vegan if you clearly identify animal-derived ingredients.`;
+export const CROPPED_IMAGE_PROMPT = `Vänligen analysera och beskriv allt innehåll på den bifogade bilden, som visar en ingrediensförteckning till en livsmedelsprodukt. Jag behöver:
 
-export const CROPPED_IMAGE_PROMPT = `Analyze this cropped ingredient list image and respond in Swedish.
+1. En komplett och exakt lista på alla ingredienser (separerade med kommatecken i originaltext)
+2. Specificera särskilt om du hittar några icke-veganska ingredienser 
+3. En bedömning om produkten är vegansk eller inte baserat på ingredienserna
+4. Om bilden är otydlig, ofullständig eller har kvalitetsproblem (oskärpa, dålig belysning, etc.), ska detta uttryckligen nämnas. 
+5. Undvik att använda parenteser med "något" vid osäkerhet om ingredienser. Skriv istället ut att ingrediensen är osäker eller svårläst.
+6. Var uppmärksam på förkortningar eller delvis lästa ord, och markera dessa som osäkra.
+7. Om en ingrediens ser ut att vara ofullständigt läst (t.ex. en del av ett längre ord), markera detta tydligt istället för att gissa.
+8. Recognize that ingredients may be listed in ANY language - not just Swedish or English.
 
-Key Points:
-1. The image shows ONLY the ingredients section selected by the user
-2. The text may be oriented horizontally or vertically depending on the package
-3. Focus on analyzing visible ingredients for vegan classification
-4. If text is clearly readable, do not consider completeness as a factor
-5. Consider both Swedish and English ingredient names
-6. Base vegan classification solely on the identified ingredients
-7. Respond entirely in Swedish
-8. Keep the analysis brief and to the point
+Om produkten innehåller animaliska ingredienser, ange vilka dessa är. Om en analys inte är möjlig på grund av dålig bildkvalitet, vänligen förklara tydligt varför.
 
-Return a single JSON object with this structure:
+Svara i JSON-format:
 {
-  "isVegan": boolean,         // true if no animal ingredients found
-  "confidence": number,       // confidence in the analysis (0-1)
-  "productName": string,
-  "ingredientList": string[], // list of identified ingredients
-  "nonVeganIngredients": string[],
-  "reasoning": string         // kort analys på svenska
+  "ingredientList": ["ingrediens1", "ingrediens2", ...],
+  "nonVeganIngredients": ["icke-vegansk ingrediens1", ...],
+  "isVegan": boolean | null,
+  "confidence": number (0.0-1.0),
+  "reasoning": "Ditt resonemang här",
+  "imageQualityIssues": ["BLUR", "INCOMPLETE", ...] or [] if no issues
 }
-
-For the reasoning field:
-1. Start with "Produkten är vegansk" or "Produkten är inte vegansk"
-2. If not vegan, list the non-vegan ingredients
-3. Keep the explanation brief (2-3 sentences)
-4. Only mention uncertainties if they affect the vegan status
-
-Important:
-- Mark as vegan (true) if all readable ingredients are plant-based
-- Only mark as non-vegan (false) if you positively identify animal-derived ingredients
-- If the text is clearly readable, maintain high confidence
-- Include any uncertainty about specific ingredients in your reasoning`;
+`;

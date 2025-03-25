@@ -90,8 +90,8 @@ export const DEFINITELY_NON_VEGAN = new Set([
   
   // Ord som indikerar animaliskt ursprung
   export const ANIMAL_INDICATORS = new Set([
+    // Swedish terms
     'animalisk', 'animaliskt',
-    'animal',
     'kött', 'kötthaltigt',
     'fisk', 'fiskhaltigt',
     'skaldjur', 'skaldjurshaltigt',
@@ -99,7 +99,24 @@ export const DEFINITELY_NON_VEGAN = new Set([
     'slakt', 'slakteri',
     'djur', 'djurprodukt',
     'gris', 'nöt', 'får',
-    'häst', 'get', 'hjort'
+    'häst', 'get', 'hjort',
+    'kyckling', 'höns', 'kalkon',
+    'ägg', 'äggprodukt',
+    'ost', 'ostprodukt',
+    'mjölk', 'mjölkprodukt',
+    'honung', 'bivax',
+    'gelatin', 'kollagen',
+    'vassle', 'smör', 'grädde',
+    
+    // English terms
+    'animal', 'meat', 'fish',
+    'dairy', 'milk', 'cheese',
+    'egg', 'honey', 'beeswax',
+    'gelatin', 'collagen',
+    'whey', 'butter', 'cream',
+    'seafood', 'shellfish',
+    'chicken', 'beef', 'pork',
+    'mutton', 'lamb'
   ]);
   
   // Kända säkra undantag - ingredienser som kan låta icke-veganska men är veganska

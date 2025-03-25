@@ -1,11 +1,11 @@
 // src/utils/imageProcessor.ts
-import sharp from 'sharp';
 
 interface CompressionOptions {
   quality?: number;
   maxWidth?: number;
   maxHeight?: number;
   isLandscape?: boolean;
+  enhanceContrast?: boolean;
 }
 
 export const IMAGE_CONSTANTS = {
@@ -39,76 +39,84 @@ export async function compressImage(
   options: CompressionOptions = {}
 ): Promise<string> {
   try {
-    const {
-      quality = IMAGE_CONSTANTS.QUALITY_LEVELS.HIGH,
-      isLandscape = false,
-      maxWidth = isLandscape ? IMAGE_CONSTANTS.DIMENSIONS.LANDSCAPE.MAX_WIDTH : IMAGE_CONSTANTS.DIMENSIONS.PORTRAIT.MAX_WIDTH,
-      maxHeight = isLandscape ? IMAGE_CONSTANTS.DIMENSIONS.LANDSCAPE.MAX_HEIGHT : IMAGE_CONSTANTS.DIMENSIONS.PORTRAIT.MAX_HEIGHT
-    } = options;
+    // Load necessary modules dynamically
+    const sharp = (await import('sharp')).default;
+    const Buffer = (await import('buffer')).Buffer;
 
-    // Konvertera base64 till buffer
-    const imageBuffer = Buffer.from(base64Image, 'base64');
-    
-    // Första komprimeringen med angivna inställningar
-    let compressedImageBuffer = await sharp(imageBuffer)
-      .jpeg({
-        quality: Math.round(quality), // Sharp förväntar sig heltal 1-100
-        progressive: true,
-        chromaSubsampling: '4:2:0'
-      })
-      .resize(maxWidth, maxHeight, {
+    // Remove the data:image/jpeg;base64, part if present
+    const base64WithoutPrefix = base64Image.includes(',')
+      ? base64Image.split(',')[1]
+      : base64Image;
+
+    // Convert base64 to buffer
+    const imageBuffer = Buffer.from(base64WithoutPrefix, 'base64');
+
+    // Get image info
+    const metadata = await sharp(imageBuffer).metadata();
+    const origWidth = metadata.width || 1000;
+    const origHeight = metadata.height || 1000;
+
+    // Calculate new dimensions
+    const maxWidth = options.maxWidth || 1500;
+    const maxHeight = options.maxHeight || 1500;
+    const scaleFactor = Math.min(
+      maxWidth / origWidth,
+      maxHeight / origHeight,
+      1 // Don't upscale images
+    );
+    const width = Math.floor(origWidth * scaleFactor);
+    const height = Math.floor(origHeight * scaleFactor);
+
+    // Process the image
+    let processedImage = sharp(imageBuffer)
+      .resize(width, height, {
         fit: 'inside',
         withoutEnlargement: true,
-        position: 'center'
+      });
+
+    // Apply contrast enhancement if requested
+    if (options.enhanceContrast) {
+      processedImage = processedImage
+        .normalize() // Automatically improve contrast
+        .modulate({ brightness: 1.05 }) // Slightly increase brightness
+        .sharpen({ sigma: 1.2 }); // Sharpen the image
+    } else {
+      // Apply only basic sharpening for better text readability
+      processedImage = processedImage.sharpen({ sigma: 0.8 });
+    }
+
+    // Compress the image
+    const compressedImageBuffer = await processedImage
+      .jpeg({
+        quality: options.quality ? Math.floor(options.quality * 100) : 80,
+        mozjpeg: true, // Use mozjpeg for better compression
       })
       .toBuffer();
 
-    let size = compressedImageBuffer.length;
-    console.log(`First compression size: ${(size / 1024 / 1024).toFixed(2)}MB`);
+    // Convert back to base64
+    const compressedBase64 = compressedImageBuffer.toString('base64');
 
-    // Om storleken är över målstorleken, prova medelhög komprimering
-    if (size > IMAGE_CONSTANTS.TARGET_SIZE) {
-      console.log('Applying medium compression...');
-      compressedImageBuffer = await sharp(compressedImageBuffer)
-        .jpeg({
-          quality: IMAGE_CONSTANTS.QUALITY_LEVELS.MEDIUM,
-          progressive: true,
-          chromaSubsampling: '4:2:0'
-        })
-        .toBuffer();
-
-      size = compressedImageBuffer.length;
-      console.log(`Second compression size: ${(size / 1024 / 1024).toFixed(2)}MB`);
+    // If the compressed image is larger than the original, return the original
+    if (compressedBase64.length > base64WithoutPrefix.length) {
+      console.log(
+        'Compressed image is larger than original, returning original'
+      );
+      return base64WithoutPrefix;
     }
 
-    // Om fortfarande över målstorleken, använd maximal komprimering
-    if (size > IMAGE_CONSTANTS.TARGET_SIZE) {
-      console.log('Applying maximum compression...');
-      compressedImageBuffer = await sharp(compressedImageBuffer)
-        .jpeg({
-          quality: IMAGE_CONSTANTS.QUALITY_LEVELS.LOW,
-          progressive: true,
-          chromaSubsampling: '4:2:0'
-        })
-        .toBuffer();
+    const finalSize = getBase64Size(compressedBase64);
+    const initialSize = getBase64Size(base64WithoutPrefix);
+    console.log(`First compression size: ${(finalSize / 1024 / 1024).toFixed(2)}MB`);
+    console.log(`Final base64 size: ${(finalSize / 1024 / 1024).toFixed(2)}MB`);
+    console.log(`Compression ratio: ${(finalSize / initialSize * 100).toFixed(1)}%`);
 
-      size = compressedImageBuffer.length;
-      console.log(`Final compression size: ${(size / 1024 / 1024).toFixed(2)}MB`);
-    }
-
-    // Beräkna slutlig base64-storlek
-    const finalBase64 = compressedImageBuffer.toString('base64');
-    const finalBase64Size = getBase64Size(finalBase64);
-    console.log(`Final base64 size: ${(finalBase64Size / 1024 / 1024).toFixed(2)}MB`);
-
-    if (finalBase64Size > IMAGE_CONSTANTS.MAX_SIZE) {
-      throw new Error(`Failed to compress image below ${IMAGE_CONSTANTS.MAX_SIZE / 1024 / 1024}MB after base64 conversion`);
-    }
-
-    return finalBase64;
+    return compressedBase64;
   } catch (error) {
-    console.error('Error in compressImage:', error);
-    throw new Error('Failed to compress image: ' + (error instanceof Error ? error.message : 'Unknown error'));
+    console.error('Error compressing image:', error);
+    // Return the original image if compression fails
+    return base64Image.includes(',')
+      ? base64Image.split(',')[1]
+      : base64Image;
   }
 }
 
@@ -118,7 +126,11 @@ export async function compressImage(
  * @returns number Storlek i bytes
  */
 export function getBase64Size(base64String: string): number {
-  return Buffer.from(base64String, 'base64').length;
+  // Remove the data:image/jpeg;base64, part if present
+  const base64WithoutPrefix = base64String.includes(',')
+    ? base64String.split(',')[1]
+    : base64String;
+  return (base64WithoutPrefix.length * 3) / 4;
 }
 
 /**

@@ -26,7 +26,7 @@ const anthropic = new Anthropic({
 });
 
 interface ClaudeAnalysisResult {
-  isVegan: boolean;
+  isVegan: boolean | null;
   confidence: number;
   productName: string;
   ingredientList: string[];
@@ -35,7 +35,7 @@ interface ClaudeAnalysisResult {
 }
 
 interface IngredientAnalysisResult {
-  isVegan: boolean;
+  isVegan: boolean | null;
   confidence: number;
   nonVeganIngredients: string[];
   allIngredients: string[];
@@ -81,10 +81,66 @@ function extractLastJsonFromText(text: string): ClaudeAnalysisResult {
 
   const lastJson = jsonMatches[jsonMatches.length - 1];
   try {
-    return JSON.parse(lastJson) as ClaudeAnalysisResult;
+    const result = JSON.parse(lastJson) as ClaudeAnalysisResult;
+    
+    // Ensure we handle the null case properly
+    if (result.isVegan === null) {
+      result.confidence = Math.min(result.confidence, 0.5);
+    }
+    
+    return result;
   } catch (error) {
     console.error('Failed to parse JSON:', lastJson);
     throw new Error('Kunde inte tolka analysresultatet');
+  }
+}
+
+// Helper to log potential misreading instances
+function logPotentialMisreading(claudeResult: ClaudeAnalysisResult, rawText: string, userId?: string): void {
+  // Check for suspicious patterns
+  const suspiciousIngredients = claudeResult.ingredientList.some(ingredient => 
+    ingredient.includes('(något)') || 
+    ingredient.includes('(...)') ||
+    ingredient.includes('...') ||
+    ingredient.includes('???')
+  );
+  
+  const partialWordPatterns = claudeResult.ingredientList.some(ingredient => {
+    // Check for words followed by parentheses indicating partial reading
+    return /\w+\s*\([^)]*\)/.test(ingredient) || 
+           // Check for short words (likely partial readings)
+           (ingredient.length <= 4 && !/salt|mjöl|olja|ris|kli|malt/i.test(ingredient));
+  });
+  
+  const highConfidenceShortList = 
+    claudeResult.ingredientList.length < 3 && 
+    claudeResult.confidence > 0.9;
+  
+  const contradictoryResults = 
+    (claudeResult.nonVeganIngredients.length > 0 && claudeResult.isVegan === true) ||
+    (claudeResult.nonVeganIngredients.length === 0 && claudeResult.isVegan === false);
+    
+  // Only log if there are suspicious patterns
+  if (suspiciousIngredients || partialWordPatterns || highConfidenceShortList || contradictoryResults) {
+    // Log to database or analytics service
+    console.log('Potential misreading detected', {
+      suspiciousIngredients,
+      partialWordPatterns,
+      highConfidenceShortList,
+      contradictoryResults,
+      ingredientList: claudeResult.ingredientList,
+      nonVeganIngredients: claudeResult.nonVeganIngredients,
+      confidence: claudeResult.confidence,
+      isVegan: claudeResult.isVegan,
+      userId: userId || 'anonymous',
+      timestamp: new Date().toISOString()
+    });
+    
+    // Here you would typically send this data to your logging service
+    // If you have a real service set up, you could include userId for tracking
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Raw text from image:', rawText);
+    }
   }
 }
 
@@ -98,31 +154,57 @@ function detectImageQualityIssues(reasoning: string, fullText: string): {
 
   const severeIssues = {
     BLUR: [
-      'cannot read', "can't read", 
-      'completely blurry', 'too blurry',
-      'illegible'
+      'cannot read', "can't read", 'kan inte läsa', 'svår att läsa',
+      'completely blurry', 'too blurry', 'för suddig', 'otydlig',
+      'illegible', 'oläslig', 'oläsbar'
     ],
     INCOMPLETE: [
-      'missing ingredients',
-      'cut off ingredients',
-      'cannot see ingredients',
-      "can't see ingredients"
+      'missing ingredients', 'saknas ingredienser',
+      'cut off ingredients', 'avskurna ingredienser',
+      'cannot see ingredients', 'kan inte se ingredienserna',
+      "can't see ingredients", 'ofullständig lista',
+      'incomplete list', 'delvis synlig',
+      'endast delvis', 'endast delar'
     ],
     LIGHTING: [
-      'too dark', 'too bright',
-      'completely obscured'
+      'too dark', 'för mörk',
+      'too bright', 'för ljus',
+      'completely obscured', 'helt dold',
+      'poor contrast', 'dålig kontrast',
+      'dark text on dark background', 'mörk text på mörk bakgrund',
+      'contrast', 'kontrast',
+      'bakgrunden gör', 'bakgrunden försvårar'
     ]
   };
 
   const minorIssues = {
     UNCERTAINTY: [
-      'difficulty identifying',
-      'having difficulty',
-      'cannot confirm',
-      'multilingual',
-      'translation variations'
+      'difficulty identifying', 'svårt att identifiera',
+      'having difficulty', 'kunde inte avgöra',
+      'cannot confirm', 'kan inte bekräfta',
+      'multilingual', 'flerspråkig',
+      'translation variations', 'osäkerhet',
+      'uncertainty', 'osäker',
+      'language', 'språk',
+      'translate', 'översätta',
+      'foreign', 'främmande',
+      'unfamiliar language', 'okänt språk',
+      'partial word', 'delvis ord',
+      'partial text', 'delvis text'
     ]
   };
+
+  // Check for specific content issues - partially read text or suspiciously short ingredient lists
+  const contentIssues = [
+    '(något)', '???', '(...)', '...',
+    'could not fully read', 'kunde inte helt läsa',
+    'partial text', 'delvis text',
+    'partial word', 'delvis ord'
+  ];
+
+  // Look for patterns indicating partial word readings in the full text
+  const partialWordPattern = /\w+\s*\([^)]*\)/;
+  const containsPartialWordPattern = partialWordPattern.test(fullTextLower);
 
   const textToCheck = [reasoningLower, fullTextLower];
   let hasSevereIssues = false;
@@ -148,11 +230,36 @@ function detectImageQualityIssues(reasoning: string, fullText: string): {
       hasSevereIssues = true;
       issues.push({
         type: 'LIGHTING',
-        message: 'Ljusförhållandena gör texten oläsbar'
+        message: 'Ljusförhållandena eller kontrasten gör texten svår att läsa'
       });
     }
 
-    if (hasSevereIssues && minorIssues.UNCERTAINTY.some(phrase => text.includes(phrase))) {
+    // Check for language-related issues
+    if (text.includes('language') || 
+        text.includes('språk') || 
+        text.includes('translate') || 
+        text.includes('översätt') ||
+        text.includes('foreign') ||
+        text.includes('främmande')) {
+      
+      hasSevereIssues = true;
+      issues.push({
+        type: 'UNCERTAINTY',
+        message: 'Ingredienslistan är på ett språk som är svårt att analysera säkert'
+      });
+    }
+
+    // Check for content issues - partially read ingredients
+    if (contentIssues.some(phrase => text.includes(phrase)) || containsPartialWordPattern) {
+      hasSevereIssues = true;
+      issues.push({
+        type: 'UNCERTAINTY',
+        message: 'Delar av ingredienslistan verkar vara felaktigt eller ofullständigt avlästa'
+      });
+    }
+
+    if (!hasSevereIssues && minorIssues.UNCERTAINTY.some(phrase => text.includes(phrase))) {
+      hasSevereIssues = true;
       issues.push({
         type: 'UNCERTAINTY',
         message: 'Det finns osäkerhet i textavläsningen'
@@ -165,45 +272,240 @@ function detectImageQualityIssues(reasoning: string, fullText: string): {
   );
 
   return {
-    hasIssues: hasSevereIssues,
+    hasIssues: hasSevereIssues || uniqueIssues.length > 0,
     issues: uniqueIssues
   };
 }
 
 function createQualityError(qualityIssues: QualityIssue[]): StandardError {
-  const suggestions = [
+  // More specific suggestions based on the detected issues
+  const commonSuggestions = [
     'Se till att hela ingredienslistan är synlig i bilden',
     'Håll kameran stilla och parallell med texten',
     'Se till att det finns tillräckligt med ljus',
     'Undvik skuggor och reflektioner'
   ];
+  
+  const specificSuggestions: Record<string, string[]> = {
+    'BLUR': [
+      'Fokusera kameran på texten innan du tar bilden',
+      'Håll telefonen stilla när du tar bilden',
+      'Använd beskärningsverktyget för att endast inkludera ingredienslistan'
+    ],
+    'INCOMPLETE': [
+      'Ta en bild som visar hela ingredienslistan',
+      'Använd beskärningsverktyget efter att du tagit en bild av hela listan',
+      'Se till att inga ord är avklippta i kanten av bilden'
+    ],
+    'LIGHTING': [
+      'Ta bilden i ett väl upplyst område',
+      'Undvik direkt blixt som kan reflekteras på förpackningen',
+      'Försök att vinkla förpackningen för att minska reflektioner',
+      'Om texten har dålig kontrast (mörk text på mörk bakgrund), hitta en ljusare bakgrund'
+    ],
+    'UNCERTAINTY': [
+      'Fokusera specifikt på ingredienslistan, inte hela förpackningen',
+      'Om texten är väldigt liten, kom närmare innan du tar bilden',
+      'Försök med beskärningsverktyget för att isolera ingredienslistan',
+      'Om ingredienslistan är på ett främmande språk, se om det finns en svensk eller engelsk version på förpackningen',
+      'Om texten har dålig kontrast, ta bilden från en annan vinkel med bättre ljus',
+      'Om möjligt, försök hitta samma produkt med ingredienslista på svenska eller engelska'
+    ]
+  };
+  
+  // Check if we have specific issues
+  const hasContrastIssue = qualityIssues.some(issue => 
+    issue.message.includes('kontrast') || 
+    issue.message.toLowerCase().includes('contrast')
+  );
+  
+  const hasLanguageIssue = qualityIssues.some(issue => 
+    issue.message.includes('språk') || 
+    issue.message.toLowerCase().includes('language')
+  );
+
+  const hasMisreadIssue = qualityIssues.some(issue =>
+    issue.message.includes('felaktigt avläst') ||
+    issue.message.includes('saknas') ||
+    issue.message.includes('oklara')
+  );
+  
+  // Add specific suggestions based on detected issues
+  const allSuggestions = [...commonSuggestions];
+  const issueTypes = new Set(qualityIssues.map(issue => issue.type));
+  
+  issueTypes.forEach(type => {
+    if (specificSuggestions[type]) {
+      // Add 1-2 specific suggestions for each issue type
+      const typeSpecificSuggestions = specificSuggestions[type];
+      
+      // For specific issues, include the related suggestions
+      let suggestionCount = Math.min(2, typeSpecificSuggestions.length);
+      let specificSuggestionIndices: number[] = [];
+      
+      if (type === 'UNCERTAINTY') {
+        if (hasContrastIssue) {
+          specificSuggestionIndices.push(4); // Add contrast-specific suggestion
+          suggestionCount++;
+        }
+        
+        if (hasLanguageIssue) {
+          specificSuggestionIndices.push(3); // Add language-specific suggestion
+          suggestionCount++;
+        }
+
+        if (hasMisreadIssue) {
+          specificSuggestionIndices.push(0, 1); // Add better focus suggestions
+          suggestionCount++;
+        }
+      }
+      
+      // Add general suggestions for this type if we don't have enough specific ones
+      for (let i = 0; specificSuggestionIndices.length < suggestionCount && i < typeSpecificSuggestions.length; i++) {
+        if (!specificSuggestionIndices.includes(i)) {
+          specificSuggestionIndices.push(i);
+        }
+      }
+      
+      // Add all selected suggestions
+      specificSuggestionIndices.forEach(index => {
+        if (index < typeSpecificSuggestions.length) {
+          allSuggestions.push(typeSpecificSuggestions[index]);
+        }
+      });
+    }
+  });
+  
+  // Create appropriate message based on detected issues
+  let message = 'Vi behöver en tydligare bild för att kunna göra en säker analys';
+  
+  if (hasLanguageIssue) {
+    message = 'Ingredienslistan på ett främmande språk är svår att analysera säkert';
+  } else if (hasContrastIssue) {
+    message = 'Textens kontrast mot bakgrunden gör den svår att läsa - försök med bättre ljus';
+  } else if (hasMisreadIssue) {
+    message = 'Ingredienslistan verkar felaktigt avläst - vi behöver en tydligare bild';
+  }
+  
+  // Limit to 5 suggestions total to avoid overwhelming the user
+  const limitedSuggestions = Array.from(new Set(allSuggestions)).slice(0, 5);
 
   return {
     error: 'IMAGE_QUALITY',
-    message: 'Vi behöver en tydligare bild för att kunna göra en säker analys',
+    message: message,
     details: {
       issues: qualityIssues.map(issue => issue.message),
-      suggestions
+      suggestions: limitedSuggestions
     }
   };
 }
 
 function determineVeganStatus(
   claudeResult: ClaudeAnalysisResult, 
-  validationResult: { isVegan: boolean },
+  validationResult: { isVegan: boolean | null; confidence: number },
   rawClaudeText: string,
   isCroppedImage: boolean = false
 ): { isVegan: boolean | null; qualityIssues?: QualityIssue[]; needsBetterImage?: boolean } {
   
   const { hasIssues, issues } = detectImageQualityIssues(claudeResult.reasoning, rawClaudeText);
   
+  // Check for unusually short ingredient list which may indicate missing ingredients
+  const isIngredientListSuspicious = 
+    claudeResult.ingredientList.length < 2 || // Extremely short list
+    (claudeResult.ingredientList.length < 3 && claudeResult.confidence > 0.9); // Short list with suspiciously high confidence
+  
+  // Check for suspicious ingredients that may indicate misreading
+  const suspiciousIngredients = claudeResult.ingredientList.some(ingredient => 
+    ingredient.includes('(något)') || 
+    ingredient.includes('(...)') ||
+    ingredient.includes('...') ||
+    ingredient.includes('???')
+  );
+  
+  // Check for partial words that may indicate unclear reading
+  const partialWordPatterns = claudeResult.ingredientList.some(ingredient => {
+    // Check for words followed by parentheses indicating partial reading
+    return /\w+\s*\([^)]*\)/.test(ingredient) || 
+           // Check for short words (likely partial readings)
+           (ingredient.length <= 4 && !/salt|mjöl|olja|ris|kli|malt/i.test(ingredient));
+  });
+  
+  // If there are suspicious patterns that indicate text misreading
+  if (isIngredientListSuspicious || suspiciousIngredients || partialWordPatterns) {
+    // Add a quality issue about potential misreading
+    issues.push({
+      type: 'UNCERTAINTY',
+      message: 'Ingredienslistan kan vara felaktigt avläst - vissa delar verkar saknas eller vara oklara'
+    });
+    
+    // Lower confidence significantly
+    claudeResult.confidence = Math.min(claudeResult.confidence, 0.6);
+  }
+  
+  // If Claude explicitly returned null for isVegan, respect that decision
+  if (claudeResult.isVegan === null) {
+    return {
+      isVegan: null,
+      qualityIssues: issues.length > 0 ? issues : [{
+        type: 'UNCERTAINTY',
+        message: 'Ingredienslistan kan inte analyseras med tillräcklig säkerhet'
+      }],
+      needsBetterImage: true
+    };
+  }
+  
+  // If validation result indicates null (too uncertain), prioritize this
+  if (validationResult.isVegan === null) {
+    return {
+      isVegan: null,
+      qualityIssues: [{
+        type: 'UNCERTAINTY',
+        message: 'Osäker analys av ingredienslistan'
+      }],
+      needsBetterImage: true
+    };
+  }
+  
   // Kontrollera diskrepans mellan reasoning och isVegan värdet
   const reasoningLower = claudeResult.reasoning.toLowerCase();
+  
+  // Look for specific Swedish phrases indicating uncertainty
+  const indicatesUncertainty = 
+    reasoningLower.includes('kunde inte avgöra') || 
+    reasoningLower.includes('kunde inte bestämma') || 
+    reasoningLower.includes('osäker') || 
+    reasoningLower.includes('otydlig') ||
+    reasoningLower.includes('kan inte läsa') ||
+    reasoningLower.includes('svårt att läsa') ||
+    reasoningLower.includes('dålig kontrast') ||
+    reasoningLower.includes('mörk bakgrund');
+  
+  // If there's uncertainty in reasoning OR we detected quality issues OR suspicious ingredients
+  if (indicatesUncertainty || hasIssues || isIngredientListSuspicious || suspiciousIngredients || partialWordPatterns) {
+    // Set a lower confidence threshold for cropped images as they should be clearer
+    const confidenceThreshold = isCroppedImage ? 0.6 : 0.7;
+    
+    // More aggressive confidence adjustment
+    const adjustedConfidence = (suspiciousIngredients || partialWordPatterns) ? 
+      Math.min(claudeResult.confidence, 0.5) : 
+      claudeResult.confidence;
+    
+    if (adjustedConfidence < confidenceThreshold) {
+      return {
+        isVegan: null,
+        qualityIssues: issues.length > 0 ? issues : [{
+          type: 'UNCERTAINTY',
+          message: 'Texten i bilden är inte tillräckligt tydlig för en säker analys'
+        }],
+        needsBetterImage: true
+      };
+    }
+  }
+  
   const indicatesVegan = 
-    reasoningLower.includes('fully vegan') || 
-    reasoningLower.includes('appears to be vegan') ||
-    reasoningLower.includes('all ingredients are') ||
-    (reasoningLower.includes('vegan') && claudeResult.nonVeganIngredients.length === 0);
+    reasoningLower.includes('är vegansk') || 
+    reasoningLower.includes('produkten är vegansk') ||
+    (reasoningLower.includes('vegansk') && claudeResult.nonVeganIngredients.length === 0);
 
   // Om reasoning indikerar vegansk och det inte finns några icke-veganska ingredienser,
   // lita på reasoning snarare än isVegan flaggan
@@ -213,22 +515,51 @@ function determineVeganStatus(
     };
   }
 
-  if (hasIssues) {
-    const confidenceThreshold = isCroppedImage ? 0.7 : 0.9;
-    if (claudeResult.confidence < confidenceThreshold) {
+  // Om vi har motstridiga uppgifter, lita på ingrediensanalysen
+  if (claudeResult.nonVeganIngredients.length === 0 && claudeResult.isVegan === false) {
+    // Double-check with our local validation and add additional checks
+    if (claudeResult.confidence < 0.8 || isIngredientListSuspicious || suspiciousIngredients || partialWordPatterns) {
+      // Low confidence and contradictory result - request better image
       return {
         isVegan: null,
-        qualityIssues: issues,
+        qualityIssues: [{
+          type: 'UNCERTAINTY',
+          message: 'Osäker analys av ingredienserna'
+        }],
         needsBetterImage: true
       };
     }
-  }
-
-  // Om vi har motstridiga uppgifter, lita på ingrediensanalysen
-  if (claudeResult.nonVeganIngredients.length === 0 && !claudeResult.isVegan) {
     return {
       isVegan: validationResult.isVegan
     };
+  }
+
+  // If we have non-vegan ingredients but isVegan is true, this is a contradiction
+  if (claudeResult.nonVeganIngredients.length > 0 && claudeResult.isVegan === true) {
+    // Double-check if the non-vegan ingredient mentions look suspicious
+    const suspiciousNonVeganIngredients = claudeResult.nonVeganIngredients.some(ing => 
+      ing.includes('(något)') || ing.includes('???') || ing.includes('...') || /\w+\s*\([^)]*\)/.test(ing)
+    );
+    
+    if (suspiciousNonVeganIngredients) {
+      return {
+        isVegan: null,
+        qualityIssues: [{
+          type: 'UNCERTAINTY',
+          message: 'De icke-veganska ingredienserna kunde inte identifieras med säkerhet'
+        }],
+        needsBetterImage: true
+      };
+    }
+    
+    return {
+      isVegan: false // Trust the specific ingredients identified
+    };
+  }
+
+  // If confidence is very high (>0.95) but we detected suspicious ingredients
+  if (claudeResult.confidence > 0.95 && (isIngredientListSuspicious || suspiciousIngredients || partialWordPatterns)) {
+    claudeResult.confidence = 0.7; // Force lower confidence
   }
 
   return {
@@ -337,6 +668,7 @@ const analyzeImage: RequestHandler = async (req, res) => {
         quality: isCroppedImage ? 1 : 0.8, // Högre kvalitet för beskurna bilder
         maxWidth: isCroppedImage ? 2000 : 1500,
         maxHeight: isCroppedImage ? 2000 : 1500,
+        enhanceContrast: true // Aktivera kontrastförbättring
       });
       const compressedSize = getBase64Size(base64Data);
       console.log(`Compressed image size: ${(compressedSize / 1024 / 1024).toFixed(2)}MB`);
@@ -382,6 +714,9 @@ const analyzeImage: RequestHandler = async (req, res) => {
 
     const claudeResult = extractLastJsonFromText(content.text);
     console.log('Parsed Claude result:', claudeResult);
+    
+    // Log potentially problematic misreading
+    logPotentialMisreading(claudeResult, content.text, userId);
 
     // VIKTIGT: Korrigera motstridiga Claude-resultat
     if (claudeResult.reasoning && 
@@ -400,8 +735,22 @@ const analyzeImage: RequestHandler = async (req, res) => {
       }
     }
 
-    // Justera konfidens baserat på om bilden är beskuren
-    if (isCroppedImage) {
+    // Check for "kunde inte avgöra" phrases that indicate uncertainty
+    if (claudeResult.reasoning && 
+        (claudeResult.reasoning.toLowerCase().includes('kunde inte avgöra') ||
+         claudeResult.reasoning.toLowerCase().includes('kan inte läsa') ||
+         claudeResult.reasoning.toLowerCase().includes('otydlig'))) {
+      
+      // If the reasoning indicates uncertainty but isVegan isn't null, adjust it
+      if (claudeResult.isVegan !== null) {
+        console.log('Korrigerar Claude-resultat baserat på osäkerhet i reasoning');
+        claudeResult.isVegan = null;
+        claudeResult.confidence = Math.min(claudeResult.confidence, 0.5);
+      }
+    }
+
+    // Justera konfidens baserat på om bilden är beskuren - but not if confidence is already low
+    if (isCroppedImage && claudeResult.confidence > 0.7) {
       claudeResult.confidence = Math.min(1, claudeResult.confidence + 0.1);
     }
 
@@ -426,17 +775,34 @@ const analyzeImage: RequestHandler = async (req, res) => {
       return;
     }
 
-    const combinedNonVeganIngredients = new Set([
-      ...claudeResult.nonVeganIngredients,
-      ...validationResult.nonVeganIngredients
-    ]);
+    // Only combine non-vegan ingredients if we have a definitive result
+    const nonVeganIngredients = veganStatus.isVegan === null 
+      ? [] 
+      : Array.from(new Set([
+          ...claudeResult.nonVeganIngredients,
+          ...validationResult.nonVeganIngredients
+        ]));
+
+    // Build a reasoning that includes uncertainty information
+    let combinedReasoning = claudeResult.reasoning;
+    
+    // Add validation reasoning if it adds information
+    if (validationResult.reasoning && 
+        validationResult.reasoning !== 'Alla ingredienser bedöms som veganska.') {
+      combinedReasoning += `\n\n${validationResult.reasoning}`;
+    }
+    
+    // For uncertain results, add a clear message
+    if (veganStatus.isVegan === null) {
+      combinedReasoning = `Kunde inte avgöra om produkten är vegansk med tillräcklig säkerhet. Försök med en tydligare bild.\n\n${combinedReasoning}`;
+    }
 
     const finalResult: IngredientAnalysisResult = {
-      isVegan: veganStatus.isVegan ?? false,
+      isVegan: veganStatus.isVegan,
       confidence: Math.min(claudeResult.confidence, validationResult.confidence),
       allIngredients: claudeResult.ingredientList,
-      nonVeganIngredients: Array.from(combinedNonVeganIngredients),
-      reasoning: `${claudeResult.reasoning}\n\n${validationResult.reasoning}`
+      nonVeganIngredients: nonVeganIngredients,
+      reasoning: combinedReasoning
     };
 
     // Efter lyckad analys, öka användningsantalet om userId tillhandahålls
