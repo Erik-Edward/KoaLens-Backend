@@ -3,20 +3,6 @@ import { AIProvider } from '../types/aiProvider';
 import config from '../config/ai-config';
 import { logger, logAIRequest, logAIResponse } from '../utils/logger';
 
-// Define the Message type locally since it's not exported from the SDK
-type Message = {
-  role: string;
-  content: Array<{
-    type: string;
-    text?: string;
-    source?: {
-      type: string;
-      media_type: string;
-      data: string;
-    };
-  }>;
-};
-
 /**
  * Service class to handle all interactions with Anthropic Claude API
  */
@@ -102,33 +88,30 @@ export class ClaudeService implements AIProvider {
         temperature: this.temperature
       });
       
-      // Create message with text and media content
-      const messageContent = [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'image',
-              source: {
-                type: 'base64',
-                media_type: mimeType,
-                data: mediaBase64,
-              },
-            },
-            {
-              type: 'text',
-              text: prompt,
-            },
-          ],
-        },
-      ];
-      
-      // Perform API call with multimodal input
+      // Use proper Anthropic message format for media content
       const message = await this.client.messages.create({
         model: this.modelName,
         max_tokens: this.maxTokens,
         temperature: this.temperature,
-        messages: messageContent,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: mimeType.startsWith('image/') ? mimeType : 'image/jpeg',
+                  data: mediaBase64
+                }
+              },
+              {
+                type: 'text',
+                text: prompt
+              }
+            ]
+          }
+        ]
       });
       
       const content = message.content[0];
