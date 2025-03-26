@@ -89,8 +89,14 @@ export class ClaudeService implements AIProvider {
       });
       
       // Ensure the mime type is one of the supported types
-      const supportedTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
-      const mediaType = supportedTypes.includes(mimeType) ? mimeType : "image/jpeg";
+      const supportedTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"] as const;
+      type SupportedMediaType = typeof supportedTypes[number];
+      
+      // Default to image/jpeg if the provided type is not supported
+      let mediaType: SupportedMediaType = "image/jpeg";
+      if (supportedTypes.includes(mimeType as SupportedMediaType)) {
+        mediaType = mimeType as SupportedMediaType;
+      }
       
       // Use proper Anthropic message format for media content
       const message = await this.client.messages.create({
