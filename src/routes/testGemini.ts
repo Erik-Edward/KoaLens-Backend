@@ -7,7 +7,7 @@ import { logger } from '../utils/logger';
 const router = Router();
 
 // Simple test endpoint to test Gemini API
-router.post('/test-gemini', async (req: Request, res: Response): Promise<Response> => {
+router.post('/test-gemini', async (req: Request, res: Response) => {
   try {
     const { prompt } = req.body;
     
@@ -40,7 +40,7 @@ router.post('/test-gemini', async (req: Request, res: Response): Promise<Respons
 });
 
 // Test endpoint for ingredient analysis
-router.post('/test-ingredients', async (req: Request, res: Response): Promise<Response> => {
+router.post('/test-ingredients', async (req: Request, res: Response) => {
   try {
     const { ingredients } = req.body;
     
