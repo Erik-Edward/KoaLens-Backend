@@ -1,7 +1,21 @@
-import { Anthropic, type Message } from '@anthropic-ai/sdk';
+import { Anthropic } from '@anthropic-ai/sdk';
 import { AIProvider } from '../types/aiProvider';
 import config from '../config/ai-config';
 import { logger, logAIRequest, logAIResponse } from '../utils/logger';
+
+// Define the Message type locally since it's not exported from the SDK
+type Message = {
+  role: string;
+  content: Array<{
+    type: string;
+    text?: string;
+    source?: {
+      type: string;
+      media_type: string;
+      data: string;
+    };
+  }>;
+};
 
 /**
  * Service class to handle all interactions with Anthropic Claude API
@@ -89,7 +103,7 @@ export class ClaudeService implements AIProvider {
       });
       
       // Create message with text and media content
-      const messageContent: Message[] = [
+      const messageContent = [
         {
           role: 'user',
           content: [
