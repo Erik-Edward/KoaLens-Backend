@@ -88,6 +88,10 @@ export class ClaudeService implements AIProvider {
         temperature: this.temperature
       });
       
+      // Ensure the mime type is one of the supported types
+      const supportedTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+      const mediaType = supportedTypes.includes(mimeType) ? mimeType : "image/jpeg";
+      
       // Use proper Anthropic message format for media content
       const message = await this.client.messages.create({
         model: this.modelName,
@@ -101,7 +105,7 @@ export class ClaudeService implements AIProvider {
                 type: 'image',
                 source: {
                   type: 'base64',
-                  media_type: mimeType.startsWith('image/') ? mimeType : 'image/jpeg',
+                  media_type: mediaType,
                   data: mediaBase64
                 }
               },
