@@ -2,6 +2,7 @@
 import express, { Request, Response } from 'express';
 import counterRoutes from './counterRoutes';
 import testGeminiRoutes from './testGemini';
+import analyzeRoutes from './analyzeRoutes';
 
 const router = express.Router();
 
@@ -10,6 +11,9 @@ router.use('/counters', counterRoutes);
 
 // Register Gemini test routes
 router.use('/ai', testGeminiRoutes);
+
+// Register analysis routes
+router.use('/analyze', analyzeRoutes);
 
 // Add other routes here as needed
 // e.g. router.use('/products', productRoutes);
