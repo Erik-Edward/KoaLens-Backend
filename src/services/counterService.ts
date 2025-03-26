@@ -24,7 +24,7 @@ export interface CounterInfo {
  */
 export async function getCounter(userId: string, counterName: string): Promise<CounterInfo> {
   try {
-    console.log(`Hämtar räknare "${counterName}" för användare:`, userId);
+    console.log(`Hämtar räknare \"${counterName}\" för användare:`, userId);
     
     const { data, error } = await supabase
       .rpc('get_counter', { 
@@ -48,8 +48,8 @@ export async function getCounter(userId: string, counterName: string): Promise<C
       user_id: userId,
       counter_name: counterName,
       value: 0,
-      limit: 5,
-      remaining: 5,
+      limit: 15, // Uppdaterat från 5 till 15
+      remaining: 15, // Uppdaterat från 5 till 15
       is_limited: true,
       has_reached_limit: false,
       reset_frequency: 'monthly',
@@ -72,7 +72,7 @@ export async function incrementCounter(
   increment: number = 1
 ): Promise<CounterInfo> {
   try {
-    console.log(`Ökar räknare "${counterName}" för användare:`, userId);
+    console.log(`Ökar räknare \"${counterName}\" för användare:`, userId);
     
     const { data, error } = await supabase
       .rpc('increment_counter', { 
@@ -97,8 +97,8 @@ export async function incrementCounter(
       user_id: userId,
       counter_name: counterName,
       value: increment,
-      limit: 5,
-      remaining: 5 - increment,
+      limit: 15, // Uppdaterat från 5 till 15
+      remaining: 15 - increment, // Uppdaterat baserat på ny gräns
       is_limited: true,
       has_reached_limit: false,
       reset_frequency: 'monthly',
@@ -139,8 +139,8 @@ export async function checkCounterLimit(
     return {
       hasReachedLimit: false,
       value: 0,
-      limit: 5,
-      remaining: 5
+      limit: 15, // Uppdaterat från 5 till 15
+      remaining: 15 // Uppdaterat från 5 till 15
     };
   }
 }
