@@ -1,16 +1,20 @@
 // src/routes/index.ts
 import express, { Request, Response } from 'express';
 import counterRoutes from './counterRoutes';
+import testGeminiRoutes from './testGemini';
 
 const router = express.Router();
 
-// Registrera counter-routes under /api/counters
+// Register counter-routes under /api/counters
 router.use('/counters', counterRoutes);
 
-// Lägga till andra routes här vid behov
-// t.ex. router.use('/products', productRoutes);
+// Register Gemini test routes
+router.use('/ai', testGeminiRoutes);
 
-// Hälsokontroll
+// Add other routes here as needed
+// e.g. router.use('/products', productRoutes);
+
+// Health check
 router.get('/health', (_req: Request, res: Response) => {
   res.status(200).json({ status: 'OK', message: 'API is running' });
 });
