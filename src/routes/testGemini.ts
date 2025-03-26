@@ -26,13 +26,13 @@ router.post('/test-gemini', async (req: Request, res: Response) => {
     const result = await aiService.generateContent(prompt);
     
     // Return the raw result
-    res.json({
+    return res.json({
       service: 'gemini',
       result
     });
   } catch (error: any) {
     logger.error('Gemini test error', { error: error.message, stack: error.stack });
-    res.status(500).json({
+    return res.status(500).json({
       error: 'Gemini API error',
       message: error.message
     });
@@ -70,14 +70,14 @@ router.post('/test-ingredients', async (req: Request, res: Response) => {
     const parsedResult = outputParser.parseAnalysisResult(result);
     
     // Return the parsed result
-    res.json({
+    return res.json({
       service: 'gemini',
       rawResult: result,
       parsedResult
     });
   } catch (error: any) {
     logger.error('Ingredient analysis test error', { error: error.message, stack: error.stack });
-    res.status(500).json({
+    return res.status(500).json({
       error: 'Ingredient analysis error',
       message: error.message
     });
