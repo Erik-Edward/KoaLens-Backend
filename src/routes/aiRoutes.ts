@@ -6,6 +6,24 @@ import { logger } from '../utils/logger';
 const router = express.Router();
 
 /**
+ * Test endpoint that doesn't call the AI service
+ * This is used to verify routing is working without hitting API limits
+ */
+router.post('/test-endpoint', (req: Request, res: Response) => {
+  logger.info('Test endpoint called', { body: req.body });
+  
+  res.json({
+    message: "Routing test successful",
+    endpointPath: "/api/ai/test-endpoint",
+    receivedData: {
+      hasImage: !!req.body.image,
+      hasIngredients: !!req.body.ingredients,
+      timestamp: new Date().toISOString()
+    }
+  });
+});
+
+/**
  * Redirect /api/ai/analyze-image to /api/analyze/image
  * This maintains backward compatibility with frontend
  */

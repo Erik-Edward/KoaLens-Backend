@@ -1,5 +1,4 @@
 // Script to test API endpoints
-const fetch = require('node-fetch');
 const fs = require('fs');
 const path = require('path');
 
@@ -16,8 +15,41 @@ const colors = {
   blue: '\x1b[34m'
 };
 
+// Run all tests
+async function runTests() {
+  // Dynamically import node-fetch
+  const { default: fetch } = await import('node-fetch');
+  
+  console.log(`${colors.blue}=== API Endpoint Testing ===\n${colors.reset}`);
+  console.log(`Testing API at: ${API_URL}`);
+  
+  // First check if server is running
+  const serverRunning = await testOriginalEndpoints(fetch);
+  
+  if (!serverRunning) {
+    console.log(`${colors.red}Server doesn't appear to be running. Please start the server before testing.${colors.reset}`);
+    return;
+  }
+  
+  // Test new endpoints
+  console.log('\n=== Testing New Endpoints ===');
+  const imageTestResult = await testAnalyzeImageEndpoint(fetch);
+  const textTestResult = await testAnalyzeTextEndpoint(fetch);
+  
+  // Summary
+  console.log(`\n${colors.blue}=== Test Summary ===\n${colors.reset}`);
+  console.log(`Image analysis endpoint: ${imageTestResult ? colors.green + 'PASS' : colors.red + 'FAIL'}${colors.reset}`);
+  console.log(`Text analysis endpoint: ${textTestResult ? colors.green + 'PASS' : colors.red + 'FAIL'}${colors.reset}`);
+  
+  if (imageTestResult && textTestResult) {
+    console.log(`\n${colors.green}All tests passed! Frontend compatibility endpoints are working.${colors.reset}`);
+  } else {
+    console.log(`\n${colors.red}Some tests failed. Please check the logs above.${colors.reset}`);
+  }
+}
+
 // Test functions
-async function testAnalyzeImageEndpoint() {
+async function testAnalyzeImageEndpoint(fetch) {
   console.log(`${colors.blue}Testing /api/ai/analyze-image endpoint...${colors.reset}`);
   
   try {
@@ -60,7 +92,7 @@ async function testAnalyzeImageEndpoint() {
   }
 }
 
-async function testAnalyzeTextEndpoint() {
+async function testAnalyzeTextEndpoint(fetch) {
   console.log(`${colors.blue}Testing /api/ai/analyze-text endpoint...${colors.reset}`);
   
   try {
@@ -90,7 +122,7 @@ async function testAnalyzeTextEndpoint() {
   }
 }
 
-async function testOriginalEndpoints() {
+async function testOriginalEndpoints(fetch) {
   console.log(`${colors.blue}Testing original endpoints...${colors.reset}`);
   
   try {
@@ -106,7 +138,9 @@ async function testOriginalEndpoints() {
     const analyzeImageResponse = await fetch(`${API_URL}/analyze/image`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' })
+      body: JSON.stringify({ 
+        image: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7' 
+      })
     });
     
     if (analyzeImageResponse.ok) {
@@ -119,36 +153,6 @@ async function testOriginalEndpoints() {
   } catch (error) {
     console.log(`${colors.red}✗ Error testing original endpoints: ${error.message}${colors.reset}`);
     return false;
-  }
-}
-
-// Run all tests
-async function runTests() {
-  console.log(`${colors.blue}=== API Endpoint Testing ===\n${colors.reset}`);
-  console.log(`Testing API at: ${API_URL}`);
-  
-  // First check if server is running
-  const serverRunning = await testOriginalEndpoints();
-  
-  if (!serverRunning) {
-    console.log(`${colors.red}Server doesn't appear to be running. Please start the server before testing.${colors.reset}`);
-    return;
-  }
-  
-  // Test new endpoints
-  console.log('\n=== Testing New Endpoints ===');
-  const imageTestResult = await testAnalyzeImageEndpoint();
-  const textTestResult = await testAnalyzeTextEndpoint();
-  
-  // Summary
-  console.log(`\n${colors.blue}=== Test Summary ===\n${colors.reset}`);
-  console.log(`Image analysis endpoint: ${imageTestResult ? colors.green + 'PASS' : colors.red + 'FAIL'}${colors.reset}`);
-  console.log(`Text analysis endpoint: ${textTestResult ? colors.green + 'PASS' : colors.red + 'FAIL'}${colors.reset}`);
-  
-  if (imageTestResult && textTestResult) {
-    console.log(`\n${colors.green}All tests passed! Frontend compatibility endpoints are working.${colors.reset}`);
-  } else {
-    console.log(`\n${colors.red}Some tests failed. Please check the logs above.${colors.reset}`);
   }
 }
 

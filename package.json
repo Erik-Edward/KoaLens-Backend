@@ -19,7 +19,9 @@
     "test:sharp": "ts-node-dev -r tsconfig-paths/register src/utils/test-sharp.ts",
     "test:compression": "ts-node-dev -r tsconfig-paths/register src/utils/test-compression.ts",
     "test:gemini": "node gemini-api-test.js",
-    "test:api": "node scripts/test-api-endpoints.js",
+    "test:api": "node --experimental-modules scripts/test-api-endpoints.js",
+    "test:api:powershell": "powershell -ExecutionPolicy Bypass -File .\\scripts\\test-api-curl.ps1",
+    "test:api:bash": "bash ./scripts/test-api-curl.sh",
     "deploy:staging": "fly deploy --config fly.staging.toml",
     "deploy:production": "fly deploy",
     "verify:config": "ts-node -r tsconfig-paths/register verify-config.js"
