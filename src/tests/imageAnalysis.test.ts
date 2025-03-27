@@ -115,6 +115,7 @@ describe('Image Analysis Service', () => {
       
       // Should be faster for cached image
       expect(processingTime).toBeLessThan(50); // Very fast for cached image
+      expect(cachedImage).toBeTruthy(); // Verify we got back a value
     });
   });
   

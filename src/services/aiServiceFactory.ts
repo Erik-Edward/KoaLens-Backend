@@ -1,10 +1,8 @@
 import { AIProvider } from '../types/aiProvider';
-import config from '../config/ai-config';
 import { logger } from '../utils/logger';
 
 // Dynamic import for lazy-loading
 let geminiService: AIProvider | null = null;
-let claudeService: AIProvider | null = null;
 
 export class AIServiceFactory {
   /**
