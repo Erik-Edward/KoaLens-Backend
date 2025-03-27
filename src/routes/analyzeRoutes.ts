@@ -159,26 +159,31 @@ router.post('/image', (async (req: Request, res: Response) => {
       preferredLanguage
     });
     
-    // Compress large images to improve performance and stay within API limits
-    if (initialSize > 1024 * 1024 * 2) { // 2MB threshold
-      logger.info('Compressing large image', { originalSizeKB: Math.round(initialSize / 1024) });
-      
-      try {
+    // Improved image processing for Gemini 2.5 Pro
+    try {
+      // For large images, use more aggressive compression to optimize for Gemini 2.5 Pro
+      if (initialSize > 1024 * 1024 * 1) { // 1MB threshold (lowered from 2MB)
+        logger.info('Compressing large image for Gemini 2.5 Pro', { originalSizeKB: Math.round(initialSize / 1024) });
+        
+        // Enhanced compression strategy optimized for Gemini 2.5 Pro's image processing capabilities
         imageBase64 = await imageProcessor.compressImage(imageBase64, {
-          quality: 80,
-          width: 1500,
-          height: 1500
+          quality: 85,          // Optimized quality for Gemini 2.5 Pro
+          width: 1200,          // Reduced from 1500 for better performance
+          height: 1200          // Reduced from 1500 for better performance
         });
         
         const compressedSize = Math.ceil(imageBase64.length * 0.75);
-        logger.info('Image compressed', { 
+        logger.info('Image optimized for Gemini 2.5 Pro', { 
           newSizeKB: Math.round(compressedSize / 1024),
           reductionPercent: Math.round((1 - compressedSize / initialSize) * 100)
         });
-      } catch (compressionError: any) {
-        logger.warn('Image compression failed, using original image', { error: compressionError.message });
-        // Continue with original image if compression fails
       }
+    } catch (compressionError: any) {
+      logger.warn('Image compression failed, continuing with original image', { 
+        error: compressionError.message,
+        errorType: compressionError.name
+      });
+      // Continue with original image if compression fails
     }
     
     // Analyze the image

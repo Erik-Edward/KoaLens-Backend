@@ -4,7 +4,7 @@ import config from '../config/ai-config';
 import { logger, logAIRequest, logAIResponse } from '../utils/logger';
 
 /**
- * Service class to handle all interactions with Google Gemini API
+ * Service class to handle all interactions with Google Gemini 2.5 Pro API
  */
 export class GeminiService implements AIProvider {
   private genAI: GoogleGenerativeAI;
@@ -13,6 +13,8 @@ export class GeminiService implements AIProvider {
   private temperature: number;
   private topK: number;
   private topP: number;
+  private maxRetries: number = 2;
+  private retryDelay: number = 1000;
 
   constructor() {
     // Get configuration from environment variables via config module
@@ -30,10 +32,10 @@ export class GeminiService implements AIProvider {
   }
 
   /**
-   * Generate content from a text prompt
+   * Generate content from a text prompt with automatic retry on failure
    */
   async generateContent(prompt: string): Promise<string> {
-    try {
+    return this.withRetry(async () => {
       const model = this.genAI.getGenerativeModel({ model: this.modelName });
       
       // Configure safety settings
@@ -85,58 +87,43 @@ export class GeminiService implements AIProvider {
       });
       
       return text;
+    });
+  }
+
+  /**
+   * Retry helper method for API calls
+   */
+  private async withRetry<T>(fn: () => Promise<T>, retries: number = this.maxRetries): Promise<T> {
+    try {
+      return await fn();
     } catch (error: any) {
-      // Implement retry logic for specific errors
-      if (error.message && (
-          error.message.includes('overloaded') || 
-          error.message.includes('rate limit') ||
-          error.message.includes('503')
-        )) {
-        logger.warn('Gemini API overloaded, retrying once after delay...', { error: error.message });
+      if (retries > 0) {
+        logger.warn('Gemini API call failed, retrying...', { 
+          errorMessage: error.message,
+          retriesLeft: retries,
+          retryDelay: this.retryDelay
+        });
         
-        // Wait for 2 seconds and retry once
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        try {
-          return await this.retryGenerateContent(prompt);
-        } catch (retryError: any) {
-          logger.error('Gemini API retry also failed', { error: retryError.message });
-          throw new Error(`Gemini API overloaded and retry failed: ${retryError.message}`);
-        }
+        // Wait before retry
+        await new Promise(resolve => setTimeout(resolve, this.retryDelay));
+        
+        // Exponential backoff
+        this.retryDelay *= 2;
+        
+        // Retry with more conservative settings
+        return this.withRetry(fn, retries - 1);
+      } else {
+        logger.error('Gemini API call failed after retries', { error: error.message });
+        throw error;
       }
-      
-      logger.error('Gemini API error', { error: error.message, stack: error.stack });
-      throw new Error(`Gemini API error: ${error.message}`);
     }
   }
 
   /**
-   * Simplified retry method with fewer settings to reduce chances of failure
-   */
-  private async retryGenerateContent(prompt: string): Promise<string> {
-    const model = this.genAI.getGenerativeModel({ model: this.modelName });
-    
-    // Use more conservative generation config for retry
-    const generationConfig: GenerationConfig = {
-      temperature: Math.max(0.1, this.temperature - 0.2),
-      maxOutputTokens: this.maxOutputTokens,
-    };
-    
-    logAIRequest('gemini-retry', { prompt, generationConfig });
-    
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig,
-    });
-    
-    const text = result.response.text();
-    return text;
-  }
-
-  /**
-   * Analyze image/video and generate content
+   * Analyze image/video and generate content with automatic retry
    */
   async generateContentFromMedia(prompt: string, mediaBase64: string, mimeType: string): Promise<string> {
-    try {
+    return this.withRetry(async () => {
       const model = this.genAI.getGenerativeModel({ model: this.modelName });
       
       // Create media part
@@ -163,38 +150,33 @@ export class GeminiService implements AIProvider {
         generationConfig 
       });
       
-      // Perform API call with multimodal input
-      const result = await model.generateContent({
-        contents: [{ role: 'user', parts: [{ text: prompt }, mediaPart] }],
-        generationConfig,
-      });
-      
-      const response = result.response;
-      const text = response.text();
-      
-      // Log response for monitoring
-      logAIResponse('gemini', { 
-        responseText: text.substring(0, 100) + (text.length > 100 ? '...' : ''),
-        promptTokens: prompt.length / 4, // Estimate
-        mediaTokens: 'Multimodal content', 
-        completionTokens: text.length / 4 // Estimate
-      });
-      
-      return text;
-    } catch (error: any) {
-      // Handle media-specific errors
-      if (error.message && (
-        error.message.includes('payload too large') || 
-        error.message.includes('content size') || 
-        error.message.includes('exceeds maximum')
-      )) {
-        logger.error('Gemini API media size error', { error: error.message });
-        throw new Error('Media file too large for analysis. Please try with a smaller or compressed image.');
+      try {
+        // Perform API call with multimodal input
+        const result = await model.generateContent({
+          contents: [{ role: 'user', parts: [{ text: prompt }, mediaPart] }],
+          generationConfig,
+        });
+        
+        const response = result.response;
+        const text = response.text();
+        
+        // Log response for monitoring
+        logAIResponse('gemini', { 
+          responseText: text.substring(0, 100) + (text.length > 100 ? '...' : ''),
+          promptTokens: prompt.length / 4, // Estimate
+          mediaTokens: 'Multimodal content', 
+          completionTokens: text.length / 4 // Estimate
+        });
+        
+        return text;
+      } catch (error: any) {
+        // If image might be too large, try with reduced quality settings for retry
+        if (error.message.includes('content too large') || error.message.includes('payload size')) {
+          throw new Error(`Image too large for processing: ${error.message}`);
+        }
+        throw error;
       }
-      
-      logger.error('Gemini API media processing error', { error: error.message, stack: error.stack });
-      throw new Error(`Gemini API media processing error: ${error.message}`);
-    }
+    });
   }
 
   /**
@@ -215,5 +197,6 @@ export class GeminiService implements AIProvider {
   }
 }
 
-// Export singleton instance
-export default new GeminiService();
+// Export an instance
+const geminiService = new GeminiService();
+export default geminiService;

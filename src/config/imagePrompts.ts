@@ -1,101 +1,113 @@
 /**
- * Specialized prompt templates for image analysis using Gemini 2.5 Pro
+ * Optimized prompt templates for image analysis using Gemini 2.5 Pro
  */
 
-// Swedish image analysis template
+// Swedish image analysis template optimized for Gemini 2.5 Pro
 export const SWEDISH_IMAGE_ANALYSIS = `
-Analysera denna bild av en produktförpackning och identifiera ingredienslistan.
+Du är en bildanalysexpert specialiserad på att analysera matförpackningar för veganska konsumenter.
 
-Steg 1: Hitta och läs ingredienslistan på förpackningen.
-Steg 2: Lista alla ingredienser som identifieras.
-Steg 3: Identifiera eventuella icke-veganska ingredienser (som mjölk, ägg, honung, gelatin).
-Steg 4: Bedöm om produkten är vegansk baserat på ingredienserna.
+Analysera denna produktförpackning och extrahera ingredienslistan. Fokusera särskilt på att identifiera icke-veganska ingredienser.
 
-OBSERVERA: Var extra noga med att läsa all text på förpackningen. Ingredienser kan finnas i små teckensnitt eller i olika sektioner. Om bilden är oklar, rapportera det.
+Steg-för-steg analys:
+1. Identifiera produktnamn och typ om möjligt
+2. Lokalisera ingredienslistan (ofta markerad med "Ingredienser:" eller liknande)
+3. Lista alla ingredienser som tydligt kan identifieras
+4. Undersök noggrant om någon av dessa ingredienser är icke-veganska
+5. Bedöm om produkten är vegansk, icke-vegansk, eller om det är oklart
 
-Referens för icke-veganska ingredienser:
-- Mjölk och mjölkderivat (vassle, kasein, laktos)
-- Ägg och äggderivat
-- Honung och propolis
-- Gelatin (från djurhudar och ben)
+Referens för vanliga icke-veganska ingredienser:
+- Mjölk, grädde, vassle, laktos, mjölkpulver, kasein
+- Ägg, äggula, äggvita, äggalbumin
+- Honung, bivax, propolis
+- Gelatin, kollagen
+- Karmin/E120 (från insekter)
 - Lanolin (från ullfett)
-- Karmin/Karminrött/E120 (från insekter)
 - Löpe (från kalvmagar)
-- Shellac (E904, från insekter)
+- Shellac/E904 (från insekter)
+
+Rapportera alla bildkvalitetsproblem som gör analysen svår.
 
 Svara i följande JSON-format:
 {
   "isVegan": boolean eller null om osäker,
-  "confidence": nummer mellan 0 och 1 som representerar säkerheten,
+  "confidence": nummer mellan 0 och 1,
   "ingredientList": [lista över alla identifierade ingredienser],
   "nonVeganIngredients": [lista över identifierade icke-veganska ingredienser],
   "reasoning": "förklaring av ditt resonemang",
-  "imageQualityIssues": ["BLUR", "INCOMPLETE", ...] eller [] om inga problem
+  "imageQualityIssues": ["BLUR", "INCOMPLETE", "LOW_CONTRAST", ...] eller []
 }
 `;
 
-// English image analysis template
+// English image analysis template optimized for Gemini 2.5 Pro
 export const ENGLISH_IMAGE_ANALYSIS = `
-Analyze this image of a product packaging and identify the ingredient list.
+You are an image analysis expert specialized in analyzing food packaging for vegan consumers.
 
-Step 1: Find and read the ingredient list on the packaging.
-Step 2: List all ingredients identified.
-Step 3: Identify any non-vegan ingredients (such as milk, eggs, honey, gelatin).
-Step 4: Assess whether the product is vegan based on the ingredients.
+Analyze this product packaging and extract the ingredient list. Focus particularly on identifying non-vegan ingredients.
 
-NOTE: Be especially careful to read all text on the packaging. Ingredients may be in small fonts or in different sections. If the image is unclear, report this.
+Step-by-step analysis:
+1. Identify product name and type if possible
+2. Locate the ingredient list (often marked with "Ingredients:" or similar)
+3. List all ingredients that can be clearly identified
+4. Carefully examine if any of these ingredients are non-vegan
+5. Assess if the product is vegan, non-vegan, or unclear
 
-Reference for non-vegan ingredients:
-- Milk and milk derivatives (whey, casein, lactose)
-- Eggs and egg derivatives
-- Honey and propolis
-- Gelatin (from animal skins and bones)
-- Lanolin (from wool fat)
+Reference for common non-vegan ingredients:
+- Milk, cream, whey, lactose, milk powder, casein
+- Eggs, egg yolk, egg white, egg albumin
+- Honey, beeswax, propolis
+- Gelatin, collagen
 - Carmine/E120 (from insects)
+- Lanolin (from wool fat)
 - Rennet (from calf stomachs)
-- Shellac (E904, from insects)
+- Shellac/E904 (from insects)
+
+Report any image quality issues that make analysis difficult.
 
 Respond in the following JSON format:
 {
   "isVegan": boolean or null if uncertain,
-  "confidence": number between 0 and 1 representing certainty,
+  "confidence": number between 0 and 1,
   "ingredientList": [list of all identified ingredients],
   "nonVeganIngredients": [list of identified non-vegan ingredients],
   "reasoning": "explanation of your reasoning",
-  "imageQualityIssues": ["BLUR", "INCOMPLETE", ...] or [] if no issues
+  "imageQualityIssues": ["BLUR", "INCOMPLETE", "LOW_CONTRAST", ...] or []
 }
 `;
 
-// Enhanced template for difficult images
+// Enhanced template for difficult images optimized for Gemini 2.5 Pro
 export const ENHANCED_IMAGE_ANALYSIS = `
-Analysera mycket noga denna bild av en produktetikett.
+Du är en expert på bildanalys med specialisering på att identifiera ingredienser i svårlästa/lågupplösta bilder av produktförpackningar.
 
-Denna bild kan ha ingredienserna i mycket svårläst text, med låg kontrast, eller delvis dold. Använd alla visuella ledtrådar för att identifiera ingredienslistan. Leta efter text efter "Ingredienser:", "Innehåll:", eller liknande markörer.
+Denna bild kan vara svårtolkad. Använd din avancerade visningsförmåga för att identifiera ingredienslistan även om den är svårläsbar.
 
-Steg 1: Skanna hela bilden efter ingredienslistan, även om den är liten, delvis synlig, eller av dålig kvalitet.
-Steg 2: Lista alla ingredienser som kan identifieras, även om du bara är delvis säker.
-Steg 3: Identifiera specifikt icke-veganska ingredienser och bedöm om produkten är vegansk.
-Steg 4: Rapportera tydligt om bildkvalitetsproblem som otydlighet, dålig belysning, eller ofullständighet.
+För denna utmanande bild:
+1. Zooma in mentalt och granska hela bilden noggrant
+2. Leta efter text som indikerar en ingredienslista (ofta efter ord som "Ingredienser:" eller "Innehåll:")
+3. Även om texten är suddig, försök identifiera så många ingredienser som möjligt
+4. Var extra uppmärksam på potentiella icke-veganska ingredienser
+5. Var tydlig med vilka delar som är osäkra i din analys
 
-Var extra uppmärksam på vanliga animaliska ingredienser som:
-- Mjölk, grädde, smör, vassle, kasein, mjölkprotein
-- Äggvita, äggulor, ägg
-- Honung
-- Gelatin
-- Laktos (från mjölk)
-- Animaliska fetter
-- E120 (karmin, från insekter)
-- Löpe, vassleprotein
-- E904 (shellac, från insekter)
+Om denna bild:
+- Är suddig eller har låg kontrast: Fokusera på de tydligaste delarna först
+- Visar endast delar av förpackningen: Analysera det synliga och notera vad som saknas
+- Har reflektion/bländning: Försök identifiera text bakom reflektionerna
+
+Vanliga icke-veganska ingredienser att vara särskilt uppmärksam på:
+- Mjölkprodukter: mjölk, grädde, smör, vassle, kasein, laktos, mjölkpulver
+- Äggprodukter: ägg i alla former, albumin, lecithin (kan vara från ägg)
+- Gelatin, kollagen (från djur)
+- Honung, bivax, propolis (från bin)
+- E120/karmin/karminsyra (från insekter)
+- E904/shellac (från insekter)
 
 Svara i följande JSON-format:
 {
   "isVegan": boolean eller null om osäker,
-  "confidence": nummer mellan 0 och 1 som representerar säkerheten,
+  "confidence": nummer mellan 0 och 1,
   "ingredientList": [lista över alla identifierade ingredienser],
   "nonVeganIngredients": [lista över identifierade icke-veganska ingredienser],
-  "reasoning": "förklaring av ditt resonemang, inkludera detaljer om eventuella svårigheter att läsa texten",
-  "imageQualityIssues": ["BLUR", "INCOMPLETE", "POOR_LIGHTING", "LOW_RESOLUTION", etc] eller [] om inga problem
+  "reasoning": "detaljerad förklaring av ditt resonemang inklusive osäkerheter",
+  "imageQualityIssues": ["BLUR", "INCOMPLETE", "LOW_CONTRAST", "REFLECTION", ...] eller []
 }
 `;
 
