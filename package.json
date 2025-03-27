@@ -19,6 +19,7 @@
     "test:sharp": "ts-node-dev -r tsconfig-paths/register src/utils/test-sharp.ts",
     "test:compression": "ts-node-dev -r tsconfig-paths/register src/utils/test-compression.ts",
     "test:gemini": "node gemini-api-test.js",
+    "test:api": "node scripts/test-api-endpoints.js",
     "deploy:staging": "fly deploy --config fly.staging.toml",
     "deploy:production": "fly deploy",
     "verify:config": "ts-node -r tsconfig-paths/register verify-config.js"
@@ -49,6 +50,7 @@
   "devDependencies": {
     "@types/jest": "^29.5.14",
     "jest": "^29.7.0",
+    "node-fetch": "^3.3.2",
     "ts-jest": "^29.2.5",
     "tsc-alias": "^1.8.11",
     "tsconfig-paths": "^4.2.0"

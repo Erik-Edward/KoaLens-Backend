@@ -3,17 +3,19 @@ import express, { Request, Response } from 'express';
 import counterRoutes from './counterRoutes';
 import testGeminiRoutes from './testGemini';
 import analyzeRoutes from './analyzeRoutes';
+import aiRoutes from './aiRoutes';
 
 const router = express.Router();
 
 // Register counter-routes under /api/counters
 router.use('/counters', counterRoutes);
 
-// Register Gemini test routes
-router.use('/ai', testGeminiRoutes);
-
 // Register analysis routes
 router.use('/analyze', analyzeRoutes);
+
+// Register AI routes - includes both test routes and compatibility routes
+router.use('/ai', aiRoutes);
+router.use('/ai', testGeminiRoutes);
 
 // Add other routes here as needed
 // e.g. router.use('/products', productRoutes);
