@@ -1,16 +1,18 @@
-import { Router, Request, Response } from 'express';
+import express, { Request, Response, RequestHandler } from 'express';
 import analysisService from '../services/analysisService';
 import { logger } from '../utils/logger';
 import { AnalysisResult } from '../utils/outputParser';
 import { incrementCounter } from '../services/counterService';
+import { imageProcessor } from '../services/imageProcessor';
+import { performance } from 'perf_hooks';
 
-const router = Router();
+const router = express.Router();
 
 /**
  * Endpoint for analyzing ingredient text
  * POST /api/analyze/text
  */
-router.post('/text', async (req: Request, res: Response) => {
+router.post('/text', (async (req: Request, res: Response) => {
   const startTime = Date.now();
   const userId = req.body.userId || 'anonymous';
   
@@ -30,10 +32,11 @@ router.post('/text', async (req: Request, res: Response) => {
     // Validate request content
     if (!ingredients && !text) {
       logger.warn('Missing content in analysis request', { userId });
-      return res.status(400).json({
+      res.status(400).json({
         error: 'MISSING_CONTENT',
         message: 'No ingredients or text provided for analysis'
       });
+      return;
     }
     
     let result: AnalysisResult;
@@ -54,10 +57,11 @@ router.post('/text', async (req: Request, res: Response) => {
         textType: text ? typeof text : 'undefined'
       });
       
-      return res.status(400).json({
+      res.status(400).json({
         error: 'INVALID_CONTENT_FORMAT',
         message: 'The provided ingredients or text has an invalid format'
       });
+      return;
     }
     
     // Calculate processing time
@@ -82,7 +86,7 @@ router.post('/text', async (req: Request, res: Response) => {
       await incrementCounter(userId, 'uncertain_products_found');
     }
     
-    return res.json(result);
+    res.json(result);
   } catch (error: any) {
     // Calculate processing time even for errors
     const processingTime = Date.now() - startTime;
@@ -99,26 +103,158 @@ router.post('/text', async (req: Request, res: Response) => {
     await incrementCounter(userId, 'text_analysis_errors');
     
     // Provide appropriate error response
-    return res.status(500).json({
+    res.status(500).json({
       error: 'ANALYSIS_ERROR',
       message: `An error occurred during analysis: ${error.message}`
     });
   }
-});
+}) as RequestHandler);
+
+/**
+ * Endpoint for analyzing images
+ * POST /api/analyze/image
+ */
+router.post('/image', (async (req: Request, res: Response) => {
+  const startTime = performance.now();
+  const userId = req.body.userId || 'anonymous';
+  
+  try {
+    const { image, preferredLanguage } = req.body;
+    
+    // Track image analysis request
+    await incrementCounter(userId, 'image_analysis_requests');
+    
+    // Validate request content
+    if (!image) {
+      logger.warn('Missing image in analysis request', { userId });
+      res.status(400).json({
+        error: 'MISSING_IMAGE',
+        message: 'No image provided for analysis'
+      });
+      return;
+    }
+    
+    // Extract base64 data from image string (handle data URI format)
+    let imageBase64: string;
+    if (typeof image === 'string') {
+      if (image.startsWith('data:image')) {
+        imageBase64 = image.split(',')[1];
+      } else {
+        imageBase64 = image;
+      }
+    } else {
+      logger.warn('Invalid image format in request', { userId });
+      res.status(400).json({
+        error: 'INVALID_IMAGE_FORMAT',
+        message: 'The provided image has an invalid format'
+      });
+      return;
+    }
+    
+    // Get image size for logging
+    const initialSize = Math.ceil(imageBase64.length * 0.75); // Approximate size in bytes
+    logger.info('Image analysis request received', { 
+      userId,
+      sizeKB: Math.round(initialSize / 1024),
+      preferredLanguage
+    });
+    
+    // Compress large images to improve performance and stay within API limits
+    if (initialSize > 1024 * 1024 * 2) { // 2MB threshold
+      logger.info('Compressing large image', { originalSizeKB: Math.round(initialSize / 1024) });
+      
+      try {
+        imageBase64 = await imageProcessor.compressImage(imageBase64, {
+          quality: 80,
+          width: 1500,
+          height: 1500
+        });
+        
+        const compressedSize = Math.ceil(imageBase64.length * 0.75);
+        logger.info('Image compressed', { 
+          newSizeKB: Math.round(compressedSize / 1024),
+          reductionPercent: Math.round((1 - compressedSize / initialSize) * 100)
+        });
+      } catch (compressionError: any) {
+        logger.warn('Image compression failed, using original image', { error: compressionError.message });
+        // Continue with original image if compression fails
+      }
+    }
+    
+    // Analyze the image
+    const result = await analysisService.analyzeImage(imageBase64, preferredLanguage);
+    
+    // Calculate processing time
+    const processingTime = performance.now() - startTime;
+    
+    // Log analysis results
+    logger.info('Image analysis completed', {
+      userId,
+      isVegan: result.isVegan,
+      confidence: result.confidence,
+      ingredientCount: result.ingredientList.length,
+      nonVeganCount: result.nonVeganIngredients.length,
+      processingTimeMs: Math.round(processingTime)
+    });
+    
+    // Track analysis results
+    if (result.isVegan === true) {
+      await incrementCounter(userId, 'vegan_products_found');
+    } else if (result.isVegan === false) {
+      await incrementCounter(userId, 'non_vegan_products_found');
+    } else {
+      await incrementCounter(userId, 'uncertain_products_found');
+    }
+    
+    // Track image quality metrics
+    if (result.imageQualityIssues && result.imageQualityIssues.length > 0) {
+      await incrementCounter(userId, 'low_quality_images');
+      
+      // Log quality issues for monitoring
+      logger.info('Image quality issues detected', { 
+        userId, 
+        issues: result.imageQualityIssues
+      });
+    }
+    
+    res.json(result);
+  } catch (error: any) {
+    // Calculate processing time even for errors
+    const processingTime = performance.now() - startTime;
+    
+    // Log error details
+    logger.error('Error in image analysis endpoint', { 
+      userId,
+      error: error.message, 
+      stack: error.stack,
+      processingTimeMs: Math.round(processingTime)
+    });
+    
+    // Track error
+    await incrementCounter(userId, 'image_analysis_errors');
+    
+    // Provide appropriate error response
+    res.status(500).json({
+      error: 'IMAGE_ANALYSIS_ERROR',
+      message: `An error occurred during image analysis: ${error.message}`
+    });
+  }
+}) as RequestHandler);
 
 /**
  * Endpoint for language detection test
  * POST /api/analyze/detect-language
  */
-router.post('/detect-language', async (req: Request, res: Response) => {
+router.post('/detect-language', (async (req: Request, res: Response) => {
   try {
     const { text } = req.body;
     
     if (!text || typeof text !== 'string') {
-      return res.status(400).json({
+      res.status(400).json({
         error: 'MISSING_TEXT',
         message: 'No text provided for language detection'
       });
+      return;
     }
     
     // Import the language detector
@@ -129,7 +265,7 @@ router.post('/detect-language', async (req: Request, res: Response) => {
     const isStructured = languageDetector.isStructuredIngredientList(text);
     const promptTemplate = languageDetector.selectPromptTemplate(text);
     
-    return res.json({
+    res.json({
       language,
       isStructured,
       promptTemplate,
@@ -137,11 +273,11 @@ router.post('/detect-language', async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     logger.error('Error in language detection endpoint', { error: error.message, stack: error.stack });
-    return res.status(500).json({
+    res.status(500).json({
       error: 'DETECTION_ERROR',
       message: `An error occurred during language detection: ${error.message}`
     });
   }
-});
+}) as RequestHandler);
 
 export default router; 

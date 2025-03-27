@@ -5,14 +5,55 @@ import { logger } from '../utils/logger';
 import { ingredientDB } from './ingredientDatabase';
 import languageDetector from '../utils/languageDetector';
 import { loadTextAnalysisPrompts } from '../config/prompts';
+import { loadImagePromptTemplates } from '../config/imagePrompts';
+import { imageProcessor } from './imageProcessor';
+import { performance } from 'perf_hooks';
+import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+
+// Constants for performance monitoring
+const PERF_THRESHOLD_WARNING = 5000; // 5 seconds
+const PERF_THRESHOLD_ERROR = 15000;  // 15 seconds
+
+// Cache configuration
+interface CacheConfig {
+  enabled: boolean;
+  directory: string;
+  ttl: number; // Time to live in milliseconds
+}
 
 /**
  * Service for analyzing ingredients and determining vegan status
  */
 export class AnalysisService {
+  private cacheConfig: CacheConfig;
+  
   constructor() {
     // Load the enhanced text analysis templates
     loadTextAnalysisPrompts(promptManager);
+    
+    // Load the image analysis templates
+    loadImagePromptTemplates(promptManager);
+    
+    // Setup cache configuration
+    this.cacheConfig = {
+      enabled: process.env.ENABLE_ANALYSIS_CACHE === 'true',
+      directory: path.join(process.cwd(), 'cache', 'analysis'),
+      ttl: parseInt(process.env.ANALYSIS_CACHE_TTL || '86400000') // Default 24 hours
+    };
+    
+    // Create cache directory
+    if (this.cacheConfig.enabled) {
+      try {
+        if (!fs.existsSync(this.cacheConfig.directory)) {
+          fs.mkdirSync(this.cacheConfig.directory, { recursive: true });
+        }
+      } catch (error: any) {
+        logger.error('Failed to create analysis cache directory', { error: error.message });
+      }
+    }
+    
     logger.info('AnalysisService initialized with enhanced prompt templates');
   }
 
@@ -56,6 +97,161 @@ export class AnalysisService {
     } catch (error: any) {
       logger.error('Error analyzing ingredients', { error: error.message, stack: error.stack });
       throw new Error(`Failed to analyze ingredients: ${error.message}`);
+    }
+  }
+  
+  /**
+   * Analyze an image to identify ingredients and determine vegan status
+   */
+  async analyzeImage(imageBase64: string, preferredLanguage?: string): Promise<AnalysisResult> {
+    const startTime = performance.now();
+    
+    try {
+      // Check for cached result first
+      const imageHash = crypto.createHash('md5').update(imageBase64).digest('hex');
+      const cachedResult = await this.getCachedAnalysis(`image_${imageHash}`);
+      
+      if (cachedResult) {
+        logger.info('Using cached image analysis result', { imageHash });
+        const perfTime = performance.now() - startTime;
+        logger.debug('Image analysis performance (cached)', { timeMs: Math.round(perfTime) });
+        return cachedResult;
+      }
+      
+      // Get the AI service
+      const aiService = await AIServiceFactory.getService();
+      
+      // Optimize image for analysis
+      logger.debug('Optimizing image for analysis', { imageHash });
+      const optimizedImage = await imageProcessor.optimizeForOCR(imageBase64);
+      
+      // Choose appropriate prompt template based on preferred language
+      let promptTemplate = 'imageAnalysis';
+      if (preferredLanguage === 'en') {
+        promptTemplate = 'imageAnalysis_en';
+      } else if (preferredLanguage === 'sv') {
+        promptTemplate = 'imageAnalysis_sv';
+      }
+      
+      // Get the prompt template text
+      const prompt = promptManager.getTemplate(promptTemplate);
+      if (!prompt) {
+        throw new Error(`Prompt template '${promptTemplate}' not found`);
+      }
+      
+      logger.info('Analyzing image with Gemini', { 
+        preferredLanguage,
+        template: promptTemplate,
+        imageHashSuffix: imageHash.substring(0, 8)
+      });
+      
+      // Generate content from the image with retry logic
+      let response = '';
+      let retryCount = 0;
+      const maxRetries = 2;
+      
+      while (retryCount <= maxRetries) {
+        try {
+          response = await aiService.generateContentFromMedia(
+            prompt,
+            optimizedImage,
+            'image/jpeg'
+          );
+          break; // Break if successful
+        } catch (error: any) {
+          retryCount++;
+          
+          if (retryCount > maxRetries) {
+            throw error; // Re-throw if max retries reached
+          }
+          
+          logger.warn(`Retry ${retryCount} for image analysis`, {
+            error: error.message,
+            imageHashSuffix: imageHash.substring(0, 8)
+          });
+          
+          // Wait before retrying (exponential backoff)
+          await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+        }
+      }
+      
+      // Parse and validate the result
+      let result = outputParser.parseAnalysisResult(response);
+      
+      // If the AI found ingredients, enhance with local validation
+      if (result.ingredientList && result.ingredientList.length > 0) {
+        result = await this.enhanceWithLocalValidation(result, result.ingredientList);
+      } 
+      // If quality issues were reported and confidence is low, try enhanced approach
+      else if (
+        (result.imageQualityIssues && result.imageQualityIssues.length > 0) || 
+        result.confidence < 0.5
+      ) {
+        logger.info('Low quality image detected, trying enhanced analysis', {
+          qualityIssues: result.imageQualityIssues,
+          confidence: result.confidence
+        });
+        
+        // Try with enhanced image processing
+        const enhancedImage = await imageProcessor.enhanceIngredientList(imageBase64);
+        const enhancedPrompt = promptManager.getTemplate('imageAnalysis_enhanced');
+        
+        if (enhancedPrompt) {
+          // Generate content with enhanced prompt and image
+          const enhancedResponse = await aiService.generateContentFromMedia(
+            enhancedPrompt,
+            enhancedImage,
+            'image/jpeg'
+          );
+          
+          // Parse the enhanced result
+          const enhancedResult = outputParser.parseAnalysisResult(enhancedResponse);
+          
+          // If enhanced result is better (found more ingredients or higher confidence)
+          if (
+            enhancedResult.ingredientList.length > result.ingredientList.length ||
+            enhancedResult.confidence > result.confidence
+          ) {
+            logger.info('Enhanced analysis provided better results', {
+              originalIngredientCount: result.ingredientList.length,
+              enhancedIngredientCount: enhancedResult.ingredientList.length,
+              originalConfidence: result.confidence,
+              enhancedConfidence: enhancedResult.confidence
+            });
+            
+            // Use enhanced result
+            result = enhancedResult;
+            
+            // Enhance with local validation
+            if (result.ingredientList.length > 0) {
+              result = await this.enhanceWithLocalValidation(result, result.ingredientList);
+            }
+          }
+        }
+      }
+      
+      // Cache the result
+      await this.cacheAnalysisResult(`image_${imageHash}`, result);
+      
+      // Track performance
+      const perfTime = performance.now() - startTime;
+      if (perfTime > PERF_THRESHOLD_ERROR) {
+        logger.error('Image analysis performance very slow', { timeMs: Math.round(perfTime) });
+      } else if (perfTime > PERF_THRESHOLD_WARNING) {
+        logger.warn('Image analysis performance slow', { timeMs: Math.round(perfTime) });
+      } else {
+        logger.debug('Image analysis performance', { timeMs: Math.round(perfTime) });
+      }
+      
+      return result;
+    } catch (error: any) {
+      const perfTime = performance.now() - startTime;
+      logger.error('Error analyzing image', { 
+        error: error.message, 
+        stack: error.stack,
+        timeMs: Math.round(perfTime)
+      });
+      throw new Error(`Failed to analyze image: ${error.message}`);
     }
   }
   
@@ -244,6 +440,54 @@ export class AnalysisService {
       .split(/\s*[,;]\s*|\s*[•*\-–—]\s*|\s+och\s+|\s+and\s+|\s*\r?\n\s*/)
       .map(part => part.trim())
       .filter(part => part.length > 0);
+  }
+  
+  /**
+   * Cache an analysis result
+   */
+  private async cacheAnalysisResult(key: string, result: AnalysisResult): Promise<void> {
+    if (!this.cacheConfig.enabled) return;
+    
+    try {
+      const cacheFile = path.join(this.cacheConfig.directory, `${key}.json`);
+      const cacheData = {
+        timestamp: Date.now(),
+        result
+      };
+      
+      await fs.promises.writeFile(cacheFile, JSON.stringify(cacheData));
+      logger.debug('Cached analysis result', { key });
+    } catch (error: any) {
+      logger.error('Failed to cache analysis result', { key, error: error.message });
+    }
+  }
+  
+  /**
+   * Get a cached analysis result
+   */
+  private async getCachedAnalysis(key: string): Promise<AnalysisResult | null> {
+    if (!this.cacheConfig.enabled) return null;
+    
+    try {
+      const cacheFile = path.join(this.cacheConfig.directory, `${key}.json`);
+      
+      if (!fs.existsSync(cacheFile)) {
+        return null;
+      }
+      
+      const cacheData = JSON.parse(await fs.promises.readFile(cacheFile, 'utf-8'));
+      
+      // Check if cache is expired
+      if (Date.now() - cacheData.timestamp > this.cacheConfig.ttl) {
+        await fs.promises.unlink(cacheFile).catch(() => {});
+        return null;
+      }
+      
+      return cacheData.result;
+    } catch (error: any) {
+      logger.error('Failed to retrieve cached analysis', { key, error: error.message });
+      return null;
+    }
   }
 }
 
