@@ -1,7 +1,13 @@
 import { Router, Request, Response, RequestHandler } from 'express';
 import { logger } from '../utils/logger';
 import videoAnalysisService from '../services/videoAnalysisService';
-import { MediaAnalysisRequest } from '../types/analysisTypes';
+
+// Local type definition for request
+interface MediaAnalysisRequest {
+  base64Data: string;
+  mimeType: string;
+  preferredLanguage?: string;
+}
 
 const router = Router();
 
@@ -22,25 +28,28 @@ router.post('/analyze-video', (async (req: Request, res: Response) => {
     
     // Validate required fields
     if (!base64Data) {
-      return res.status(400).json({
+      res.status(400).json({
         success: false,
         error: 'Missing required field: base64Data'
       });
+      return;
     }
     
     if (!mimeType) {
-      return res.status(400).json({
+      res.status(400).json({
         success: false,
         error: 'Missing required field: mimeType'
       });
+      return;
     }
     
     // Validate mimeType format
     if (!mimeType.startsWith('video/')) {
-      return res.status(400).json({
+      res.status(400).json({
         success: false,
         error: 'Invalid mimeType: Must be a video type (video/*)'
       });
+      return;
     }
     
     logger.info('Video analysis request received', { 

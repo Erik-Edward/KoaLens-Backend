@@ -145,6 +145,25 @@ export class ClaudeService implements AIProvider {
   }
 
   /**
+   * Generate content from text and video
+   * Note: Claude does not support video processing directly, this method throws an error
+   * @param prompt The text prompt to guide the video analysis
+   * @param videoBase64 The base64-encoded video data
+   * @param mimeType The MIME type of the video
+   * @returns Promise resolving to the generated content
+   * @throws Error since Claude does not support video processing
+   */
+  async generateContentFromVideo(prompt: string, videoBase64: string, mimeType: string = 'video/mp4'): Promise<string> {
+    logger.error('Video processing attempted with Claude API, which does not support video', { 
+      promptLength: prompt.length,
+      videoDataSize: videoBase64.length,
+      mimeType
+    });
+    
+    throw new Error('Claude API does not support video processing. Please use Gemini for video analysis.');
+  }
+
+  /**
    * Count tokens for a prompt (approximate estimate)
    * Claude doesn't have a direct countTokens method, so we use an estimate
    */

@@ -5,7 +5,19 @@ import { v4 as uuidv4 } from 'uuid';
 import { logger } from '../utils/logger';
 import { VideoOptimizer } from '../utils/videoOptimizer';
 import geminiService from './geminiService';
-import { IngredientAnalysisResult, MediaAnalysisRequest, VideoAnalysisResult } from '../types/analysisTypes';
+
+// Type definitions (borrowed from ../types/analysisTypes.ts)
+interface IngredientAnalysisResult {
+  name: string;
+  isVegan: boolean;
+  confidence: number;
+}
+
+interface VideoAnalysisResult {
+  ingredients: IngredientAnalysisResult[];
+  isVegan: boolean;
+  confidence: number;
+}
 
 /**
  * Service class to handle video analysis using Gemini
