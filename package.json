@@ -47,10 +47,12 @@
     "sharp": "^0.33.5",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.7.2",
+    "uuid": "^11.1.0",
     "winston": "^3.17.0"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",
+    "@types/uuid": "^10.0.0",
     "jest": "^29.7.0",
     "node-fetch": "^3.3.2",
     "ts-jest": "^29.2.5",

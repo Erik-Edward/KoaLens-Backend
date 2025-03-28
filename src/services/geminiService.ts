@@ -180,6 +180,73 @@ export class GeminiService implements AIProvider {
   }
 
   /**
+   * Specialized method for video analysis with optimized handling for Gemini 2.5 Pro
+   * @param prompt The text prompt to guide the video analysis
+   * @param videoBase64 The base64-encoded video data
+   * @param mimeType The MIME type of the video, default is video/mp4
+   * @returns Promise resolving to the generated content
+   */
+  async generateContentFromVideo(prompt: string, videoBase64: string, mimeType: string = 'video/mp4'): Promise<string> {
+    return this.withRetry(async () => {
+      const model = this.genAI.getGenerativeModel({ model: this.modelName });
+      
+      // Configure generation settings with video-optimized parameters
+      const generationConfig = {
+        temperature: this.temperature,
+        topK: this.topK,
+        topP: this.topP,
+        maxOutputTokens: this.maxOutputTokens * 1.5, // Increase for video analysis
+      };
+      
+      // Log request for monitoring
+      logAIRequest('gemini', { 
+        prompt, 
+        mediaType: mimeType,
+        mediaSizeBytes: videoBase64.length * 0.75, // Approximation of Base64 size
+        generationConfig 
+      });
+      
+      try {
+        // Use the simplified method for multimodal content recommended by Google
+        const result = await model.generateContent([
+          prompt, 
+          { 
+            inlineData: { 
+              data: videoBase64, 
+              mimeType: mimeType 
+            } 
+          }
+        ]);
+        
+        const response = result.response;
+        const text = response.text();
+        
+        // Log response for monitoring
+        logAIResponse('gemini', { 
+          responseText: text.substring(0, 100) + (text.length > 100 ? '...' : ''),
+          promptTokens: prompt.length / 4, // Estimate
+          mediaTokens: 'Video content', 
+          completionTokens: text.length / 4 // Estimate
+        });
+        
+        return text;
+      } catch (error: any) {
+        // Handle video-specific errors
+        if (error.message.includes('content too large') || error.message.includes('payload size')) {
+          throw new Error(`Video too large for processing: ${error.message}`);
+        } else if (error.message.includes('unsupported media type')) {
+          throw new Error(`Unsupported video format: ${error.message}`);
+        } else if (error.message.includes('model not found') || error.message.includes('model does not support')) {
+          throw new Error(`Model does not support video analysis: ${error.message}`);
+        }
+        
+        // Rethrow other errors
+        throw error;
+      }
+    });
+  }
+
+  /**
    * Count tokens for a prompt (approximate estimate)
    */
   async countTokens(prompt: string): Promise<number> {

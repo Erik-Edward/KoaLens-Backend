@@ -11,6 +11,7 @@ import { checkUserLimit, incrementAnalysisCount } from '@/services/supabaseServi
 // Importera endast när det behövs i faktisk kod
 // import { supabase } from '@/services/supabaseService';
 import apiRoutes from './routes';
+import { TempFileCleaner } from './utils/tempFileCleaner';
 
 dotenv.config();
 
@@ -20,6 +21,9 @@ app.use(express.json({ limit: '50mb' }));
 
 // Använd nya API-routes under /api path
 app.use('/api', apiRoutes);
+
+// Starta schemalagd rensning av tillfälliga filer
+TempFileCleaner.startScheduler();
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY
@@ -921,4 +925,5 @@ app.get('/test-counter/:userId', async (req, res) => {
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`Video analysis API available at http://localhost:${PORT}/api/video/analyze-video`);
 });

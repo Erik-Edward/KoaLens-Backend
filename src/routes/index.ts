@@ -4,6 +4,7 @@ import counterRoutes from './counterRoutes';
 import testGeminiRoutes from './testGemini';
 import analyzeRoutes from './analyzeRoutes';
 import aiRoutes from './aiRoutes';
+import videoAnalysisRoutes from './videoAnalysis';
 
 const router = express.Router();
 
@@ -16,6 +17,9 @@ router.use('/analyze', analyzeRoutes);
 // Register AI routes - includes both test routes and compatibility routes
 router.use('/ai', aiRoutes);
 router.use('/ai', testGeminiRoutes);
+
+// Register video analysis routes
+router.use('/video', videoAnalysisRoutes);
 
 // Add other routes here as needed
 // e.g. router.use('/products', productRoutes);

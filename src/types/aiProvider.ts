@@ -20,6 +20,15 @@ export interface AIProvider {
   generateContentFromMedia(prompt: string, mediaBase64: string, mimeType: string): Promise<string>;
 
   /**
+   * Generate content from text and video
+   * @param prompt The text prompt to guide the video analysis
+   * @param videoBase64 The base64-encoded video data
+   * @param mimeType The MIME type of the video
+   * @returns Promise resolving to the generated content
+   */
+  generateContentFromVideo(prompt: string, videoBase64: string, mimeType: string): Promise<string>;
+
+  /**
    * Count tokens in a prompt (or estimate)
    * @param prompt The text to count tokens for
    * @returns Promise resolving to token count
