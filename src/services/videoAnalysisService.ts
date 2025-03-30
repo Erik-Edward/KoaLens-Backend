@@ -5,18 +5,31 @@ import { v4 as uuidv4 } from 'uuid';
 import { logger } from '../utils/logger';
 import { VideoOptimizer } from '../utils/videoOptimizer';
 import geminiService from './geminiService';
+import { 
+  isIngredientVegan, 
+  translateToSwedish
+} from '../utils/ingredientsDatabase';
+import {
+  logVideoAnalysisRequest,
+  logVideoAnalysisResponse,
+  logIngredientCorrection
+} from '../utils/videoLogger';
 
 // Type definitions (borrowed from ../types/analysisTypes.ts)
 interface IngredientAnalysisResult {
   name: string;
   isVegan: boolean;
   confidence: number;
+  originalName?: string; // Original name before translation (if different)
+  detectedLanguage?: string; // Language this ingredient was detected in
 }
 
 interface VideoAnalysisResult {
   ingredients: IngredientAnalysisResult[];
   isVegan: boolean;
   confidence: number;
+  detectedLanguages?: string[]; // Languages detected on packaging
+  reasoning?: string; // Explanation for vegan classification
 }
 
 /**
@@ -56,7 +69,12 @@ export class VideoAnalysisService {
     mimeType: string,
     preferredLanguage: string = 'en'
   ): Promise<VideoAnalysisResult> {
-    logger.info('Starting video analysis', { mimeType, preferredLanguage });
+    // Log the analysis request
+    logVideoAnalysisRequest({
+      mimeType,
+      preferredLanguage,
+      dataSize: base64Data.length
+    });
     
     try {
       // Validate video data
@@ -115,22 +133,62 @@ export class VideoAnalysisService {
         promptLength: prompt.length
       });
       
-      const result = await geminiService.generateContentFromVideo(prompt, videoBase64, 'video/mp4');
+      // First attempt - with standard processing
+      let result: VideoAnalysisResult;
+      let attemptCount = 0;
+      const maxAttempts = 2;
       
-      // Parse result and ensure it contains required fields
-      const analysisResult = this.parseAnalysisResult(result);
+      try {
+        attemptCount++;
+        const aiResponse = await geminiService.generateContentFromVideo(prompt, videoBase64, 'video/mp4');
+        result = this.parseAnalysisResult(aiResponse);
+      } catch (error: any) {
+        logger.warn('First video analysis attempt failed, retrying with simplified prompt', { 
+          error: error.message,
+          attempt: attemptCount
+        });
+        
+        // Simplified retry if first attempt failed
+        if (attemptCount < maxAttempts) {
+          attemptCount++;
+          // Simplify prompt for retry
+          const simplifiedPrompt = `
+Analyze this food product image. List all ingredients you can see. 
+For each ingredient, indicate if it's vegan (true) or non-vegan (false).
+Format your response as JSON with ingredients array, each with name, isVegan, and confidence fields.
+`;
+          const aiResponse = await geminiService.generateContentFromVideo(simplifiedPrompt, videoBase64, 'video/mp4');
+          result = this.parseAnalysisResult(aiResponse);
+        } else {
+          throw error; // Re-throw if all attempts failed
+        }
+      }
       
-      logger.info('Video analysis completed successfully', {
-        ingredientCount: analysisResult.ingredients?.length || 0,
-        isVegan: analysisResult.isVegan,
-        confidence: analysisResult.confidence
+      // Log the analysis completion
+      logVideoAnalysisResponse({
+        processingTimeSec: (Date.now() - new Date().getTime()) / 1000,
+        ingredientCount: result.ingredients.length,
+        isVegan: result.isVegan,
+        confidenceScore: result.confidence,
+        detectedLanguages: result.detectedLanguages,
+        statusCode: 200
       });
       
       // Clean up temp files
       this.cleanupTempFiles(tempVideoPath, optimizedVideoPath);
       
-      return analysisResult;
+      return result;
     } catch (error: any) {
+      // Log the error
+      logVideoAnalysisResponse({
+        processingTimeSec: (Date.now() - new Date().getTime()) / 1000,
+        ingredientCount: 0,
+        isVegan: false,
+        confidenceScore: 0,
+        statusCode: 500,
+        errorMessage: error.message
+      });
+      
       logger.error('Error analyzing video', { 
         error: error.message,
         stack: error.stack
@@ -191,16 +249,131 @@ export class VideoAnalysisService {
         parsedResult.confidence = 0.5; // Default
       }
       
+      // Store detected languages if available
+      const detectedLanguages = parsedResult.detectedLanguages || [];
+      
+      // Validate and correct ingredient classifications using our database
+      this.validateIngredients(parsedResult.ingredients);
+      
+      // Process multilingual ingredients (deduplicate and translate)
+      this.processMultilingualIngredients(parsedResult.ingredients, detectedLanguages);
+      
       // Additional logging for debugging
       logger.info('Parsed ingredients data', { 
         ingredientsData: JSON.stringify(parsedResult.ingredients)
       });
+      
+      // Re-evaluate overall vegan status based on corrected ingredients
+      const nonVeganIngredients = parsedResult.ingredients.filter((i: any) => !i.isVegan);
+      parsedResult.isVegan = nonVeganIngredients.length === 0;
       
       return parsedResult as VideoAnalysisResult;
     } catch (error) {
       logger.error('Error parsing analysis result', { error });
       throw new Error('Failed to parse analysis result from AI');
     }
+  }
+  
+  /**
+   * Validate and correct ingredient classifications using our database
+   * @param ingredients List of ingredients to validate
+   */
+  private validateIngredients(ingredients: any[]): void {
+    if (!ingredients || !Array.isArray(ingredients)) return;
+    
+    logger.debug('Validating ingredient classifications', { 
+      ingredientCount: ingredients.length 
+    });
+    
+    for (const ingredient of ingredients) {
+      if (!ingredient.name) continue;
+      
+      // Store original values for logging
+      const originalIsVegan = ingredient.isVegan;
+      
+      // Check against our database of known ingredients
+      const veganStatus = isIngredientVegan(ingredient.name);
+      
+      // Only override if we have definitive knowledge about this ingredient
+      if (veganStatus !== null) {
+        ingredient.isVegan = veganStatus;
+        ingredient.confidence = 0.98; // High confidence for database matches
+        
+        // Log if we corrected the AI's classification
+        if (originalIsVegan !== ingredient.isVegan) {
+          logIngredientCorrection({
+            ingredient: ingredient.name,
+            originalStatus: originalIsVegan,
+            correctedStatus: ingredient.isVegan,
+            reason: 'Database match',
+            confidence: ingredient.confidence
+          });
+        }
+      }
+    }
+  }
+  
+  /**
+   * Process multilingual ingredients to deduplicate and translate to Swedish
+   * @param ingredients List of ingredients to process
+   * @param detectedLanguages Languages detected on the packaging
+   */
+  private processMultilingualIngredients(ingredients: any[], detectedLanguages: string[]): void {
+    if (!ingredients || !Array.isArray(ingredients) || ingredients.length === 0) return;
+    
+    // Set to track processed ingredient names (case-insensitive)
+    const processedNames = new Set<string>();
+    const uniqueIngredients: any[] = [];
+    
+    // Map to store best translation for each ingredient
+    const translationMap = new Map<string, any>();
+    
+    // Process each ingredient
+    for (const ingredient of ingredients) {
+      if (!ingredient.name) continue;
+      
+      // Try to translate to Swedish
+      const originalName = ingredient.name;
+      const translatedName = translateToSwedish(originalName);
+      
+      // Normalize for deduplication
+      const normalizedName = translatedName.toLowerCase().trim();
+      
+      // If we already have this ingredient (after translation), skip it
+      if (processedNames.has(normalizedName)) {
+        // If we have a higher confidence value, update the existing entry
+        const existing = translationMap.get(normalizedName);
+        if (existing && ingredient.confidence > existing.confidence) {
+          existing.confidence = ingredient.confidence;
+          existing.isVegan = ingredient.isVegan;
+        }
+        continue;
+      }
+      
+      // Mark as processed
+      processedNames.add(normalizedName);
+      
+      // Create a new ingredient object with translation
+      const processedIngredient = {
+        ...ingredient,
+        name: translatedName,
+        originalName: originalName !== translatedName ? originalName : undefined
+      };
+      
+      // Store in map and unique list
+      translationMap.set(normalizedName, processedIngredient);
+      uniqueIngredients.push(processedIngredient);
+    }
+    
+    // Replace the original array with deduplicated ingredients
+    ingredients.length = 0;
+    ingredients.push(...uniqueIngredients);
+    
+    logger.debug('Processed multilingual ingredients', {
+      originalCount: processedNames.size,
+      finalCount: uniqueIngredients.length,
+      detectedLanguages
+    });
   }
   
   /**
@@ -256,12 +429,11 @@ export class VideoAnalysisService {
   }
   
   /**
-   * Build the prompt for video analysis
-   * @param language Preferred language for the prompt
-   * @returns Prompt for the AI to analyze the video
+   * Build a prompt for the AI to analyze food product ingredients
+   * Enhanced to properly handle veganism classification and multilingual packaging
    */
   private buildAnalysisPrompt(language: string): string {
-    // Prompt optimized for Gemini 2.0 Flash and structured output
+    // Prompt optimized for Gemini to handle multilingual ingredients and vegan classification
     if (language === 'sv') {
       return `
 Du är en expert på att analysera matprodukter och identifiera deras ingredienser.
@@ -271,8 +443,14 @@ INSTRUKTIONER:
 2. Titta igenom hela videon. Om det finns en ingredienslista eller näringsinnehåll, fokusera på den.
 3. Identifiera ALLA ord i ingredienslistan. Var extra uppmärksam på korta ingredienser som "salt", "olja", "vatten", etc.
 4. Var speciellt noggrann med att identifiera alla animaliska ingredienser.
-5. Missa inte vanliga ingredienser som "palmolja", "salt", "socker", "konserveringsmedel" etc.
-6. Översätt inte ingredienserna - använd dem exakt som de är skrivna.
+5. VIKTIGT: Var mycket noggrann med veganska bedömningar. Markera endast ingredienser som "isVegan": false om de DEFINITIVT kommer från djur.
+   - Animaliska ingredienser inkluderar: ägg, mjölk, ost, grädde, kött, fisk, gelatin, honung, etc.
+   - Växtbaserade ingredienser som sojabaserade produkter (tofu, tempeh, sojasås, etc) är ALLTID veganska.
+6. Om det finns flera språk på förpackningen:
+   - Identifiera den svenska ingredienslistan om möjligt
+   - Undvik att lista samma ingrediens flera gånger på olika språk
+   - Ge alltid den svenska versionen om tillgänglig, annars originalet
+   - Varje ingrediens ska endast listas en gång (ingen duplicering)
 
 SVARA ENDAST MED ETT JSON-OBJEKT i detta format:
 \`\`\`json
@@ -286,7 +464,8 @@ SVARA ENDAST MED ETT JSON-OBJEKT i detta format:
     ...
   ],
   "isVegan": true/false,
-  "confidence": 0.0-1.0
+  "confidence": 0.0-1.0,
+  "detectedLanguages": ["sv", "en", "de", ...] // Lista över språk du upptäckt på förpackningen
 }
 \`\`\`
 
@@ -311,7 +490,8 @@ EXEMPEL PÅ KORREKT SVAR:
     }
   ],
   "isVegan": true,
-  "confidence": 0.97
+  "confidence": 0.97,
+  "detectedLanguages": ["sv", "en"]
 }
 \`\`\`
 
@@ -321,9 +501,11 @@ Se till att:
 3. Identifiera ALLA ingredienser, även de kortaste som "salt"
 4. Ange "confidence" som ett nummer mellan 0 och 1
 5. Inkludera ALLA ingredienser du kan identifiera i videon
+6. Undvika duplicerade ingredienser även om de nämns på flera språk
+7. Korrekta klassifikationer av veganska/icke-veganska ingredienser, särskilt för sojabaserade produkter
 `;
     } else {
-      // Default to English
+      // Default to English with similar improvements
       return `
 You are an expert at analyzing food products and identifying their ingredients.
 
@@ -332,8 +514,14 @@ INSTRUCTIONS:
 2. Look through the entire video. If there's an ingredient list or nutritional information, focus on that.
 3. Identify ALL words in the ingredient list. Pay extra attention to short ingredients like "salt", "oil", "water", etc.
 4. Be especially thorough in identifying any animal-derived ingredients.
-5. Don't miss common ingredients like "palm oil", "salt", "sugar", "preservatives" etc.
-6. Do not translate ingredients - use them exactly as written.
+5. IMPORTANT: Be very precise with vegan assessments. Only mark ingredients as "isVegan": false if they DEFINITELY come from animals.
+   - Animal ingredients include: eggs, milk, cheese, cream, meat, fish, gelatin, honey, etc.
+   - Plant-based ingredients like soy-based products (tofu, tempeh, soy sauce, etc.) are ALWAYS vegan.
+6. If multiple languages appear on the packaging:
+   - Identify the main language of the product
+   - Avoid listing the same ingredient multiple times in different languages
+   - If an ingredient appears in Swedish, prefer that version
+   - Each ingredient should only be listed once (no duplication)
 
 RESPOND ONLY WITH A JSON OBJECT in this format:
 \`\`\`json
@@ -347,7 +535,8 @@ RESPOND ONLY WITH A JSON OBJECT in this format:
     ...
   ],
   "isVegan": true/false,
-  "confidence": 0.0-1.0
+  "confidence": 0.0-1.0,
+  "detectedLanguages": ["en", "sv", "de", ...] // List of languages detected on packaging
 }
 \`\`\`
 
@@ -372,7 +561,8 @@ EXAMPLE OF CORRECT RESPONSE:
     }
   ],
   "isVegan": true,
-  "confidence": 0.97
+  "confidence": 0.97,
+  "detectedLanguages": ["en", "fr"]
 }
 \`\`\`
 
@@ -382,6 +572,8 @@ Make sure to:
 3. Identify ALL ingredients, even the shortest ones like "salt"
 4. Specify "confidence" as a number between 0 and 1
 5. Include ALL ingredients you can identify in the video
+6. Avoid duplicate ingredients even if they appear in multiple languages
+7. Correctly classify vegan/non-vegan ingredients, especially for soy-based products
 `;
     }
   }
