@@ -157,6 +157,11 @@ export class VideoAnalysisService {
         // Extract the JSON content from the match
         const jsonContent = jsonMatch[1] || jsonMatch[0];
         parsedResult = JSON.parse(jsonContent);
+        
+        // Log the parsed JSON for debugging
+        logger.debug('Parsed JSON result', { 
+          fullParsedResult: JSON.stringify(parsedResult)
+        });
       } else {
         // If no JSON found, try to extract information from text
         logger.warn('No JSON found in AI response, using fallback parser');
@@ -185,6 +190,11 @@ export class VideoAnalysisService {
       if (typeof parsedResult.confidence !== 'number' || parsedResult.confidence < 0 || parsedResult.confidence > 1) {
         parsedResult.confidence = 0.5; // Default
       }
+      
+      // Additional logging for debugging
+      logger.info('Parsed ingredients data', { 
+        ingredientsData: JSON.stringify(parsedResult.ingredients)
+      });
       
       return parsedResult as VideoAnalysisResult;
     } catch (error) {
@@ -246,61 +256,134 @@ export class VideoAnalysisService {
   }
   
   /**
-   * Build prompt for Gemini to analyze video
+   * Build the prompt for video analysis
+   * @param language Preferred language for the prompt
+   * @returns Prompt for the AI to analyze the video
    */
   private buildAnalysisPrompt(language: string): string {
-    const basePrompt = language === 'sv' ? 
-      `Du är en expert på att analysera matvaror och ingredienser från video. Din uppgift är att analysera videon och identifiera alla ingredienser som visas.
+    // Prompt optimized for Gemini 2.0 Flash and structured output
+    if (language === 'sv') {
+      return `
+Du är en expert på att analysera matprodukter och identifiera deras ingredienser.
 
-Analysera den tillhandahållna videon och identifiera alla ingredienser som visas. Svara med en JSON-struktur i följande format:
+INSTRUKTIONER:
+1. Analysera videon NOGGRANT. Leta efter alla ingredienser som visas på förpackningen.
+2. Titta igenom hela videon. Om det finns en ingredienslista eller näringsinnehåll, fokusera på den.
+3. Identifiera ALLA ord i ingredienslistan. Var extra uppmärksam på korta ingredienser som "salt", "olja", "vatten", etc.
+4. Var speciellt noggrann med att identifiera alla animaliska ingredienser.
+5. Missa inte vanliga ingredienser som "palmolja", "salt", "socker", "konserveringsmedel" etc.
+6. Översätt inte ingredienserna - använd dem exakt som de är skrivna.
 
+SVARA ENDAST MED ETT JSON-OBJEKT i detta format:
 \`\`\`json
 {
   "ingredients": [
     {
       "name": "ingrediensnamn",
-      "isVegan": boolean,
-      "confidence": number mellan 0 och 1
-    }
+      "isVegan": true/false,
+      "confidence": 0.0-1.0
+    },
+    ...
   ],
-  "isVegan": boolean,
-  "confidence": number mellan 0 och 1
+  "isVegan": true/false,
+  "confidence": 0.0-1.0
 }
 \`\`\`
 
-Var extra uppmärksam på:
-1. Alla synliga ingredienser
-2. Förpackningar och etiketter som visas
-3. Om det finns några animaliska ingredienser (mjölk, ägg, kött, etc.)
+EXEMPEL PÅ KORREKT SVAR:
+\`\`\`json
+{
+  "ingredients": [
+    {
+      "name": "Majskorn",
+      "isVegan": true,
+      "confidence": 0.98
+    },
+    {
+      "name": "Palmolja",
+      "isVegan": true,
+      "confidence": 0.95
+    },
+    {
+      "name": "Salt",
+      "isVegan": true,
+      "confidence": 0.99
+    }
+  ],
+  "isVegan": true,
+  "confidence": 0.97
+}
+\`\`\`
 
-Svara ENDAST med JSON-data enligt formatet ovan. Lägg inte till några förklaringar eller övrig text.` :
-      
-      `You are an expert at analyzing food products and ingredients from video. Your task is to analyze the video and identify all ingredients shown.
+Se till att:
+1. ALLTID följa det exakta JSON-formatet
+2. Ordningen på fälten ska vara: "name", "isVegan", "confidence" för varje ingrediens
+3. Identifiera ALLA ingredienser, även de kortaste som "salt"
+4. Ange "confidence" som ett nummer mellan 0 och 1
+5. Inkludera ALLA ingredienser du kan identifiera i videon
+`;
+    } else {
+      // Default to English
+      return `
+You are an expert at analyzing food products and identifying their ingredients.
 
-Analyze the provided video and identify all ingredients shown. Respond with a JSON structure in the following format:
+INSTRUCTIONS:
+1. Carefully analyze the video. Look for all ingredients shown on the packaging.
+2. Look through the entire video. If there's an ingredient list or nutritional information, focus on that.
+3. Identify ALL words in the ingredient list. Pay extra attention to short ingredients like "salt", "oil", "water", etc.
+4. Be especially thorough in identifying any animal-derived ingredients.
+5. Don't miss common ingredients like "palm oil", "salt", "sugar", "preservatives" etc.
+6. Do not translate ingredients - use them exactly as written.
 
+RESPOND ONLY WITH A JSON OBJECT in this format:
 \`\`\`json
 {
   "ingredients": [
     {
       "name": "ingredient name",
-      "isVegan": boolean,
-      "confidence": number between 0 and 1
-    }
+      "isVegan": true/false,
+      "confidence": 0.0-1.0
+    },
+    ...
   ],
-  "isVegan": boolean,
-  "confidence": number between 0 and 1
+  "isVegan": true/false,
+  "confidence": 0.0-1.0
 }
 \`\`\`
 
-Pay special attention to:
-1. All visible ingredients
-2. Packaging and labels shown
-3. If there are any animal-derived ingredients (milk, eggs, meat, etc.)
+EXAMPLE OF CORRECT RESPONSE:
+\`\`\`json
+{
+  "ingredients": [
+    {
+      "name": "Corn kernels",
+      "isVegan": true,
+      "confidence": 0.98
+    },
+    {
+      "name": "Palm oil",
+      "isVegan": true,
+      "confidence": 0.95
+    },
+    {
+      "name": "Salt",
+      "isVegan": true,
+      "confidence": 0.99
+    }
+  ],
+  "isVegan": true,
+  "confidence": 0.97
+}
+\`\`\`
 
-Respond ONLY with the JSON data as per the format above. Do not add any explanations or additional text.`;
-    
-    return basePrompt;
+Make sure to:
+1. ALWAYS follow the exact JSON format
+2. The order of fields should be: "name", "isVegan", "confidence" for each ingredient
+3. Identify ALL ingredients, even the shortest ones like "salt"
+4. Specify "confidence" as a number between 0 and 1
+5. Include ALL ingredients you can identify in the video
+`;
+    }
   }
   
   /**

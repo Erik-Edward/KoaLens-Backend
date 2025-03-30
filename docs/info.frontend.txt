@@ -1,0 +1,102 @@
+# KoaLens Videoanalys: Problemdokumentation
+
+## Sammanfattning
+Videoanalysfunktionen i KoaLens-applikationen fungerar inte på grund av ett problem med backend-servern. Applikationen försöker anropa en API-slutpunkt som antingen inte existerar eller inte är korrekt konfigurerad på produktionsservern.
+
+## Detaljerad problembeskrivning
+
+### Klientsidan (KoaLens-app)
+1. Applikationen försöker anropa `https://koalens-backend.fly.dev/api/video/analyze-video` med korrekt formaterad data:
+   ```javascript
+   const requestData = {
+     base64Data: base64Video,       // Base64-kodad videodata
+     mimeType: "video/mp4",         // MIME-typ för videon
+     preferredLanguage: "sv"        // Språkinställning
+   };
+   ```
+
+2. HTTP-begäran görs med följande headers:
+   ```javascript
+   headers: {
+     'Content-Type': 'application/json',
+     'Accept': 'application/json'
+   }
+   ```
+
+3. Servern svarar med HTTP 404 (Not Found) vilket indikerar att slutpunkten inte finns:
+   ```
+   Cannot POST /api/video/analyze-video
+   ```
+
+4. Applikationen faller tillbaka på `mockVideoAnalysis()` för att visa testdata istället.
+
+### Serversidan (KoaLens-Backend)
+1. I backend-koden (GitHub repository: Erik-Edward/KoaLens-Backend) finns videoanalysstöd implementerat:
+   - `src/routes/videoAnalysis.ts` - Definierar routern för `/api/video/analyze-video`
+   - `src/routes/index.ts` - Registrerar videoAnalysisRoutes på `/video`-rutten
+   - `src/services/videoAnalysisService.ts` - Implementerar videoanalys med Gemini API
+   - `src/services/geminiService.ts` - Implementerar integration med Google Gemini API
+   - `src/utils/videoOptimizer.ts` - Hanterar videooptimering med ffmpeg
+
+2. API-slutpunkten förväntar följande parametrar:
+   ```typescript
+   interface {
+     base64Data: string;         // Krävs
+     mimeType: string;           // Krävs
+     preferredLanguage?: string; // Valfritt
+   }
+   ```
+
+3. Videoanalysprocessen använder flera beroenden:
+   - ffmpeg för videooptimering
+   - Google Gemini API för AI-analys
+   - Temporära filsystemrättigheter för att spara videofiler tillfälligt
+
+## Verifikation av problemet
+1. GET-begäran till `https://koalens-backend.fly.dev/api/health` returnerar:
+   ```json
+   {"status":"OK","message":"API is running"}
+   ```
+
+2. GET-begäran till `https://koalens-backend.fly.dev` returnerar:
+   ```json
+   {"status":"ok","message":"KoaLens API is running","environment":"production","timestamp":"2025-03-29T10:15:28.790Z"}
+   ```
+
+3. POST-begäran till `https://koalens-backend.fly.dev/api/video/analyze-video` returnerar:
+   ```
+   Cannot POST /api/video/analyze-video
+   ```
+
+## Troliga orsaker
+Baserat på undersökningen är de troliga orsakerna:
+
+1. Videoanalys-routern är inte inkluderad i produktionsbygget av backend-servern.
+2. ffmpeg är inte installerat på produktionsservern (krävs av `VideoOptimizer`-klassen).
+3. Google Gemini API-nyckeln är inte konfigurerad i produktionsmiljön.
+4. Det finns problem med filsystemrättigheter för temporära filer på servern.
+
+## Rekommenderade åtgärder
+
+1. **Verifiera serverinstallation**:
+   - Kontrollera att alla routes registreras korrekt i produktionsbygget.
+   - Se till att `videoAnalysisRoutes` är inkluderad i `src/routes/index.ts`.
+
+2. **Verifiera beroenden**:
+   - Installera ffmpeg på produktionsservern.
+   - Kontrollera att kommandot `ffmpeg -version` fungerar på servern.
+
+3. **Verifiera miljövariabler**:
+   - Se till att Gemini API-nyckeln är korrekt konfigurerad i produktionsmiljön.
+   - Kontrollera alla nödvändiga miljövariabler i `.env`-filen på servern.
+
+4. **Verifiera filrättigheter**:
+   - Se till att servern har rättigheter att skapa och radera filer i det temporära katalogen.
+   - Kontrollera att `os.tmpdir()` är tillgängligt och skrivbart på servern.
+
+5. **Logghantering**:
+   - Aktivera detaljerad loggning på servern för att identifiera eventuella initieringsfel.
+   - Kontrollera serverloggar för eventuella fel relaterade till videoanalys.
+
+## Tillfällig lösning
+Tills problemet åtgärdas använder applikationen `mockVideoAnalysis()` som fallback, vilket ger en testupplevelse men med simulerade data istället för faktisk analys.
