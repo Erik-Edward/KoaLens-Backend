@@ -1,0 +1,343 @@
+name,e_number,description
+Kurkumin,E100,Färgämne från gurkmeja
+Riboflavin,E101,Vitamin B2 från växtriket
+Riboflavin-5-fosfat,E101a,Vitamin B2 derivat från växtriket
+Tartrazin,E102,Syntetiskt gult färgämne
+Krysoin S,E103,Syntetiskt färgämne
+Kinolingult,E104,Syntetiskt gult färgämne
+Fast Yellow AB,E105,Syntetiskt färgämne
+Riboflavin-5-natriumfosfat,E106,Vitamin B2 derivat
+Yellow 2G,E107,Syntetiskt färgämne
+Para-orange,E110,Syntetiskt orange färgämne
+Orange GGN,E111,Syntetiskt färgämne
+Karmosin,E122,Syntetiskt rött färgämne
+Amarant,E123,Syntetiskt rött färgämne
+Nykockin,E124,Syntetiskt rött färgämne
+Scharlakan GN,E125,Syntetiskt färgämne
+Ponceau 6R,E126,Syntetiskt färgämne
+Erytrosin,E127,Syntetiskt rött färgämne
+Röd 2G,E128,Syntetiskt färgämne
+Allurarött AC,E129,Syntetiskt rött färgämne
+Indantrén blått RS,E130,Syntetiskt färgämne
+Patentblått V,E131,Syntetiskt blått färgämne
+Indigotin,E132,Syntetiskt blått färgämne
+Briljantblått FCF,E133,Syntetiskt blått färgämne
+Klorofyll,E140,Naturligt grönt färgämne från växter
+Klorofyllkopplexer,E141,Naturligt grönt färgämne från växter
+Grön S,E142,Syntetiskt grönt färgämne
+Fast Green FCF,E143,Syntetiskt grönt färgämne
+Sockerkulör (karamell),E150a,Naturligt brunt färgämne från karamelliserat socker
+Alkalisk sulfitprocessad sockerkulör,E150b,Karamelliserat socker med alkalisk sulfitprocess
+Ammoniumprocessad sockerkulör,E150c,Karamelliserat socker med ammoniakprocess
+Ammoniaksulfitprocessad sockerkulör,E150d,Karamelliserat socker med ammoniaksulfitprocess
+Briljantsvart BN,E151,Syntetiskt svart färgämne
+Svart 7984,E152,Syntetiskt svart färgämne
+Vegetabiliskt kol,E153,Naturligt svart färgämne från växtmaterial
+Brun FK,E154,Syntetiskt brunt färgämne
+Brun HT,E155,Syntetiskt brunt färgämne
+Beta-karoten,E160a,Naturligt orange färgämne från växter
+Annatto,E160b,Naturligt orange färgämne från växten annatto
+Paprikaoleoresin,E160c,Naturligt rött färgämne från paprika
+Lykopen,E160d,Naturligt rött färgämne från tomater och andra röda växter
+Beta-apo-8-karotenal,E160e,Syntetiskt orange färgämne
+Beta-apo-8-karotensyra etylester,E160f,Syntetiskt orange färgämne
+Flavoxantin,E161a,Naturligt gult färgämne från växter
+Lutein,E161b,Naturligt gult färgämne från växter
+Kryptoxantin,E161c,Naturligt gult färgämne från växter
+Rubixantin,E161d,Naturligt gult färgämne från växter
+Violaxantin,E161e,Naturligt gult färgämne från växter
+Rodoxantin,E161f,Naturligt rött färgämne från växter
+Rödbetsrött,E162,Naturligt rött färgämne från rödbetor
+Antocyaner,E163,Naturligt rött-blått färgämne från bär och frukt
+Kalciumkarbonat,E170,Mineralbaserat vitt färgämne och surhetsreglerande medel
+Titandioxid,E171,Mineralbaserat vitt färgämne
+Järnoxider och järnhydroxider,E172,Mineralbaserade färgämnen i rött gult och svart
+Aluminium,E173,Mineralbaserat silverfärgat färgämne
+Silver,E174,Mineralbaserat silverfärgat färgämne
+Guld,E175,Mineralbaserat guldfärgat färgämne
+Litolrubin BK,E180,Syntetiskt rött färgämne
+Tannin,E181,Naturligt färgämne från växter
+Sorbinsyra,E200,Naturligt konserveringsmedel från rönnbär
+Natriumsorbat,E201,Salt av sorbinsyra för konservering
+Kaliumsorbat,E202,Salt av sorbinsyra för konservering
+Kalciumsorbat,E203,Salt av sorbinsyra för konservering
+Bensoesyra,E210,Naturligt förekommande konserveringsmedel från bär
+Natriumbensoat,E211,Salt av bensoesyra för konservering
+Kaliumbensoat,E212,Salt av bensoesyra för konservering
+Kalciumbensoat,E213,Salt av bensoesyra för konservering
+Para-hydroxybensoesyraetylester,E214,Syntetiskt konserveringsmedel
+Para-hydroxybensoesyranatriumetylester,E215,Syntetiskt konserveringsmedel
+Para-hydroxybensoesyrapropylester,E216,Syntetiskt konserveringsmedel
+Para-hydroxybensoesyrametylester,E218,Syntetiskt konserveringsmedel
+Para-hydroxybensoesyranatriumpropylester,E217,Syntetiskt konserveringsmedel
+Para-hydroxybensoesyranatriumpropylester,E219,Syntetiskt konserveringsmedel
+Svaveldioxid,E220,Konserveringsmedel och antioxidationsmedel
+Natriumsulfit,E221,Sulfitbaserat konserveringsmedel
+Natriumvätesulfit,E222,Sulfitbaserat konserveringsmedel
+Natriummetabisulfit,E223,Sulfitbaserat konserveringsmedel
+Kaliummetabisulfit,E224,Sulfitbaserat konserveringsmedel
+Kaliumsulfit,E225,Sulfitbaserat konserveringsmedel
+Kalciumsulfit,E226,Sulfitbaserat konserveringsmedel
+Kalciumvätesulfit,E227,Sulfitbaserat konserveringsmedel
+Kaliumbisulfit,E228,Sulfitbaserat konserveringsmedel
+Bifenyl,E230,Syntetiskt konserveringsmedel för citrusfrukter
+Ortofenylfenol,E231,Syntetiskt konserveringsmedel
+Natriumortofenylfenol,E232,Syntetiskt konserveringsmedel
+Tiabendazol,E233,Syntetiskt konserveringsmedel
+Nisin,E234,Naturligt antimikrobiellt ämne
+Natamycin,E235,Naturligt antimikrobiellt ämne
+Myrsyra,E236,Naturligt förekommande konserveringsmedel
+Natriumformiat,E237,Salt av myrsyra för konservering
+Kalciumformiat,E238,Salt av myrsyra för konservering
+Hexametylentetramin,E239,Syntetiskt konserveringsmedel
+Formaldehyd,E240,Syntetiskt konserveringsmedel
+Dimetyldikarbonat,E242,Syntetiskt konserveringsmedel
+Kaliumnitrit,E249,Konserveringsmedel för vegetabiliska produkter
+Natriumnitrit,E250,Konserveringsmedel för vegetabiliska produkter
+Natriumnitrat,E251,Konserveringsmedel för vegetabiliska produkter
+Ättiksyra,E260,Naturlig syra från fermentering
+Kaliumacetat,E261,Salt av ättiksyra
+Natriumacetat,E262,Salt av ättiksyra
+Kalciumacetat,E263,Salt av ättiksyra
+Ammoniumacetat,E264,Salt av ättiksyra
+Mjölksyra,E270,Naturlig syra från växtfermentering
+Propionsyra,E280,Naturligt förekommande konserveringsmedel
+Natriumpropionat,E281,Salt av propionsyra
+Kalciumpropionat,E282,Salt av propionsyra
+Kaliumpropionat,E283,Salt av propionsyra
+Borsyra,E284,Naturligt konserveringsmedel
+Natriumtetraborat,E285,Mineralbaserat konserveringsmedel
+Koldioxid,E290,Naturligt förekommande gas för konservering
+Äppelsyra,E296,Naturlig syra från äpplen
+L-askorbinsyra,E297,Syntetisk variant av vitamin C
+Askorbinsyra,E300,Naturligt antioxidationsmedel (vitamin C)
+Natriumaskorbat,E301,Salt av askorbinsyra (vitamin C)
+Kalciumaskorbat,E302,Salt av askorbinsyra (vitamin C)
+Kaliumaskorbat,E303,Salt av askorbinsyra (vitamin C)
+Tokoferolkoncentrat,E306,Naturligt vitamin E från växter
+Syntetiskt alfa-tokoferol,E307,Syntetisk form av vitamin E
+Syntetiskt gamma-tokoferol,E308,Syntetisk form av vitamin E
+Syntetiskt delta-tokoferol,E309,Syntetisk form av vitamin E
+Propylgallat,E310,Syntetiskt antioxidationsmedel
+Oktylgallat,E311,Syntetiskt antioxidationsmedel
+Dodecylgallat,E312,Syntetiskt antioxidationsmedel
+Erytorbinsyra,E315,Syntetiskt antioxidationsmedel
+Natriumerytorbat,E316,Salt av erytorbinsyra
+Kalciumerytorbat,E317,Salt av erytorbinsyra
+Kaliumerytorbat,E318,Salt av erytorbinsyra
+Butylhydroxianisol (BHA),E320,Syntetiskt antioxidationsmedel
+Butylhydroxitoluen (BHT),E321,Syntetiskt antioxidationsmedel
+Natriumlaktat,E325,Salt av mjölksyra från växtfermentering
+Kaliumlaktat,E326,Salt av mjölksyra från växtfermentering
+Kalciumlaktat,E327,Salt av mjölksyra från växtfermentering
+Citronsyra,E330,Naturlig syra från citrusfrukter
+Natriumcitrat,E331,Salt av citronsyra
+Kaliumcitrat,E332,Salt av citronsyra
+Kalciumcitrat,E333,Salt av citronsyra
+Vinsyra,E334,Naturlig syra från vindruvor
+Natriumtartrat,E335,Salt av vinsyra
+Kaliumtartrat,E336,Salt av vinsyra
+Kaliumnatriumtartrat,E337,Dubbelsalt av vinsyra
+Fosforsyra,E338,Mineralbaserad syra
+Natriumfosfat,E339,Salt av fosforsyra
+Kaliumfosfat,E340,Salt av fosforsyra
+Kalciumfosfat,E341,Salt av fosforsyra
+Magnesiumfosfat,E343,Salt av fosforsyra
+Natriummalat,E350,Salt av äppelsyra
+Kaliummalat,E351,Salt av äppelsyra
+Kalciummalat,E352,Salt av äppelsyra
+Metavinsyra,E353,Modifierad form av vinsyra
+Kalciumtartrat,E354,Salt av vinsyra
+Adipinsyra,E355,Syntetisk syra
+Natriumadipat,E356,Salt av adipinsyra
+Kaliumadipat,E357,Salt av adipinsyra
+Bärnstenssyra,E363,Naturligt förekommande syra
+Fumarsyra,E365,Naturligt förekommande syra
+Kaliumfumarat,E366,Salt av fumarsyra
+Kalciumfumarat,E367,Salt av fumarsyra
+Nikotinsyra,E375,Vitamin B3
+Kalciumglukonat,E380,Salt av glukonsyra från växter
+Järnammoniumcitrat,E381,Järnförening av citronsyra
+Kalciumdinatrium-EDTA,E385,Syntetiskt konserveringsmedel
+Alginsyra,E400,Naturligt förtjockningsmedel från brunalger
+Natriumalginat,E401,Salt av alginsyra från brunalger
+Kaliumalginat,E402,Salt av alginsyra från brunalger
+Ammoniumalginat,E403,Salt av alginsyra från brunalger
+Kalciumalginat,E404,Salt av alginsyra från brunalger
+Propylenglykolalginat,E405,Modifierad alginat från brunalger
+Agar,E406,Naturligt förtjockningsmedel från rödalger
+Karragenan,E407,Naturligt förtjockningsmedel från rödalger
+Fruktkärnmjöl,E410,Naturligt förtjockningsmedel från johannesbröd
+Guarkärnmjöl,E412,Naturligt förtjockningsmedel från guarböna
+Dragant,E413,Naturligt förtjockningsmedel från dragantbuske
+Arabiskt gummi,E414,Naturligt förtjockningsmedel från akaciaträd
+Xantangummi,E415,Naturligt förtjockningsmedel från bakteriefermentering
+Karayagummi,E416,Naturligt förtjockningsmedel från karayaträd
+Taragummi,E417,Naturligt förtjockningsmedel från taragummibuske
+Gellangummi,E418,Naturligt förtjockningsmedel från bakteriefermentering
+Sorbitol,E420,Sötningsmedel från växtbaserade källor
+Mannitol,E421,Sötningsmedel från växtbaserade källor
+Konjak,E425,Naturligt förtjockningsmedel från konjakrot
+Pektin,E440,Naturligt förtjockningsmedel från frukt
+Kaliumfosfatider,E444,Emulgeringsmedel från växtbaserade källor
+Difosfater,E450,Syntetiska stabiliseringsmedel
+Trifosfater,E451,Syntetiska stabiliseringsmedel
+Polyfosfater,E452,Syntetiska stabiliseringsmedel
+Beta-cyklodextrin,E459,Stabiliseringsmedel från stärkelse
+Cellulosapulver,E460,Naturligt förtjockningsmedel från växtfibrer
+Metylcellulosa,E461,Modifierad cellulosa från växtfibrer
+Etylcellulosa,E462,Modifierad cellulosa från växtfibrer
+Hydroxipropylcellulosa,E463,Modifierad cellulosa från växtfibrer
+Hydroxipropylmetylcellulosa,E464,Modifierad cellulosa från växtfibrer
+Etylmetylcellulosa,E465,Modifierad cellulosa från växtfibrer
+Karboximetylcellulosa,E466,Modifierad cellulosa från växtfibrer
+Tvärbunden natriumkarboximetylcellulosa,E468,Modifierad cellulosa från växtfibrer
+Enzymatiskt hydrolyserad karboximetylcellulosa,E469,Modifierad cellulosa från växtfibrer
+Natriumkarbonat,E500,Mineralbaserat bakpulver och surhetsreglerande medel
+Kaliumkarbonat,E501,Mineralbaserat surhetsreglerande medel
+Ammoniumkarbonat,E503,Mineralbaserat bakpulver
+Magnesiumkarbonat,E504,Mineralbaserat surhetsreglerande medel
+Saltsyra,E507,Mineralbaserad syra för pH-reglering
+Kaliumklorid,E508,Mineralbaserat salt för smakförstärkning
+Kalciumklorid,E509,Mineralbaserat salt för konsistensgivning
+Ammoniumklorid,E510,Mineralbaserat salt för pH-reglering
+Magnesiumklorid,E511,Mineralbaserat salt för konsistensgivning
+Tennklorid,E512,Mineralbaserat antioxidationsmedel
+Svavelsyra,E513,Mineralbaserad syra för pH-reglering
+Natriumsulfat,E514,Mineralbaserat salt för konsistensgivning
+Kaliumsulfat,E515,Mineralbaserat salt för konsistensgivning
+Kalciumsulfat,E516,Mineralbaserat salt för konsistensgivning
+Ammoniumsulfat,E517,Mineralbaserat salt för pH-reglering
+Magnesiumsulfat,E518,Mineralbaserat salt för konsistensgivning
+Kopparsulfat,E519,Mineralbaserat salt för näringsförstärkning
+Aluminiumsulfat,E520,Mineralbaserat stabiliseringsmedel
+Aluminiumnatriumsulfat,E521,Mineralbaserat stabiliseringsmedel
+Aluminiumkaliumsulfat,E522,Mineralbaserat stabiliseringsmedel
+Aluminiumammoniumsulfat,E523,Mineralbaserat stabiliseringsmedel
+Natriumhydroxid,E524,Mineralbaserat surhetsreglerande medel
+Kaliumhydroxid,E525,Mineralbaserat surhetsreglerande medel
+Kalciumhydroxid,E526,Mineralbaserat surhetsreglerande medel
+Ammoniumhydroxid,E527,Mineralbaserat surhetsreglerande medel
+Magnesiumhydroxid,E528,Mineralbaserat surhetsreglerande medel
+Kalciumoxid,E529,Mineralbaserat surhetsreglerande medel
+Magnesiumoxid,E530,Mineralbaserat klumpförebyggande medel
+Järncyanid,E535,Mineralbaserat klumpförebyggande medel
+Kaliumferrocyanid,E536,Mineralbaserat klumpförebyggande medel
+Natriumtiosulfat,E539,Mineralbaserat antioxidationsmedel
+Dikalciumdifosfat,E540,Mineralbaserat bakpulver
+Natriumaluminiumfosfat,E541,Mineralbaserat bakpulver
+Kalciumfosfat,E543,Mineralbaserat bakpulver
+Kalciumpolyfostfat,E544,Mineralbaserat emulgeringsmedel
+Ammoniumpolyfostfat,E545,Mineralbaserat emulgeringsmedel
+Natriumsilikat,E550,Mineralbaserat klumpförebyggande medel
+Magnesiumsilikat,E553a,Mineralbaserat klumpförebyggande medel
+Talk,E553b,Mineralbaserat klumpförebyggande medel
+Natriumaluminiumsilikat,E554,Mineralbaserat klumpförebyggande medel
+Kaliumaluminiumsilikat,E555,Mineralbaserat klumpförebyggande medel
+Kalciumaluminiumsilikat,E556,Mineralbaserat klumpförebyggande medel
+Kiseldioxid,E551,Mineralbaserat klumpförebyggande medel
+Zinkoxid,E558,Mineralbaserat färgämne
+Magnesiumtartrat,E574,Salt av vinsyra från växtriket
+Glukonsyrans deltalakton,E575,Naturligt förekommande syra
+Natriumglukonat,E576,Salt av glukonsyra från växtriket
+Kaliumglukonat,E577,Salt av glukonsyra från växtriket
+Kalciumglukonat,E578,Salt av glukonsyra från växtriket
+Järnglukonat,E579,Salt av glukonsyra med järn
+Glutaminsyra,E620,Naturlig smakförstärkare från växtproteiner
+Mononatriumglutamat,E621,Salt av glutaminsyra för smakförstärkning
+Monokaliumglutamat,E622,Salt av glutaminsyra för smakförstärkning
+Kalciumdiglutamat,E623,Salt av glutaminsyra för smakförstärkning
+Monoammoniumglutamat,E624,Salt av glutaminsyra för smakförstärkning
+Magnesiumdiglutamat,E625,Salt av glutaminsyra för smakförstärkning
+Dimetylpolysiloxan,E900,Syntetiskt skumdämpningsmedel
+Bivax (vitt och gult),E901,Naturligt vax från växtbaserade källor
+Kandeljävax,E902,Vegetabiliskt ytbehandlingsmedel
+Karnaubavax,E903,Naturligt vax från palmblad
+Shellack,E904,Naturligt ytbehandlingsmedel från växter
+Paraffinolja,E905,Mineralbaserat ytbehandlingsmedel
+Paraffinolja (mikrokristallint vax),E905a,Mineralbaserat ytbehandlingsmedel
+Paraffinolja (flytande),E905b,Mineralbaserat ytbehandlingsmedel
+Paraffinolja (högvisköst),E905c,Mineralbaserat ytbehandlingsmedel
+Bensoeharts,E906,Naturligt ytbehandlingsmedel från växter
+Mikrokristallint vax,E907,Mineralbaserat ytbehandlingsmedel
+Risfröolja vax,E908,Vegetabiliskt vax
+Spermacetvax,E912,Naturligt vax från växtbaserade källor
+Lanolin,E914,Växtbaserat ytbehandlingsmedel
+Estrar av kolofonium,E915,Växtbaserat ytbehandlingsmedel
+Kalciumjodad,E922,Mineralbaserat näringstillskott
+Kaliumbromat,E923,Syntetiskt mjölbehandlingsmedel
+Kaliumklorit,E924,Syntetiskt mjölbehandlingsmedel
+Klor,E925,Syntetiskt mjölbehandlingsmedel
+Klorindioxid,E926,Syntetiskt mjölbehandlingsmedel
+Azodikarbonamid,E927b,Syntetiskt mjölbehandlingsmedel
+Karbamidperoxid,E928,Syntetiskt mjölbehandlingsmedel
+Kalciumperoxid,E930,Syntetiskt mjölbehandlingsmedel
+Argon,E938,Inert förpackningsgas
+Helium,E939,Inert förpackningsgas
+Dikväveoxid,E940,Förpackningsgas
+Kväve,E941,Förpackningsgas
+Dikväveoxid,E942,Förpackningsgas
+Butan,E943a,Drivgas
+Isobutan,E943b,Drivgas
+Propan,E944,Drivgas
+Syre,E948,Förpackningsgas
+Väte,E949,Förpackningsgas
+Acesulfam K,E950,Syntetiskt sötningsmedel
+Aspartam,E951,Syntetiskt sötningsmedel
+Cyklaminsyra,E952,Syntetiskt sötningsmedel
+Isomalt,E953,Sötningsmedel från sockerbetor
+Sackarin,E954,Syntetiskt sötningsmedel
+Sukralos,E955,Syntetiskt sötningsmedel
+Alitam,E957,Syntetiskt sötningsmedel
+Glycyrrhizin,E958,Naturligt sötningsmedel från lakritsrot
+Neohesperidindihydrochalkon,E959,Syntetiskt sötningsmedel från citrusfrukter
+Maltitol,E965,Sötningsmedel från stärkelse
+Xylitol,E967,Sötningsmedel från björkved
+Quillaja-extrakt,E999,Naturligt skumbildande medel från såpbarkträd
+Alpha-amylas,E1103,Enzym från växtbaserade källor
+Invertase,E1106,Enzym från växtbaserade källor
+Katalas,E1107,Enzym från växtbaserade källor
+Amylas,E1108,Enzym från växtbaserade källor
+Lipoxygenas,E1109,Enzym från växtbaserade källor
+Esterar av fettsyror,E1110,Emulgator från växtbaserade källor
+Glykosidas,E1111,Enzym från växtbaserade källor
+Laktas,E1112,Enzym från växtbaserade källor
+Beta-amylas,E1113,Enzym från växtbaserade källor
+Alpha-amylas,E1114,Enzym från växtbaserade källor
+Lipas,E1115,Enzym från växtbaserade källor
+Glykosisomeras,E1116,Enzym från växtbaserade källor
+Glykosoxidas,E1117,Enzym från växtbaserade källor
+Karbohydras,E1118,Enzym från växtbaserade källor
+Pektin-lyase,E1119,Enzym från växtbaserade källor
+Alpha-galaktosidas,E1120,Enzym från växtbaserade källor
+Beta-galaktosidas,E1121,Enzym från växtbaserade källor
+Cellulas,E1122,Enzym från växtbaserade källor
+Glukan-4-glukosidas,E1123,Enzym från växtbaserade källor
+Pentosanas,E1124,Enzym från växtbaserade källor
+Lysozym,E1125,Enzym från växtbaserade källor
+Polyfenoloxidas,E1126,Enzym från växtbaserade källor
+Trypsin,E1127,Enzym från växtbaserade källor
+Lipoxygenas,E1128,Enzym från växtbaserade källor
+Subtilisin,E1129,Enzym från växtbaserade källor
+Beta-xylosidas,E1130,Enzym från växtbaserade källor
+Glycerol,E1400,Modifierad stärkelse från växter
+Stärkelse oxiderad,E1401,Modifierad stärkelse från växter
+Stärkelse alkalisk,E1402,Modifierad stärkelse från växter
+Blekt stärkelse,E1403,Modifierad stärkelse från växter
+Oxiderad stärkelse,E1404,Modifierad stärkelse från växter
+Monostärkelsefosfat,E1410,Modifierad stärkelse från växter
+Distärkelsefosfat,E1412,Modifierad stärkelse från växter
+Fosfaterad distärkelsefosfat,E1413,Modifierad stärkelse från växter
+Acetylerad distärkelsefosfat,E1414,Modifierad stärkelse från växter
+Acetylerad stärkelse,E1420,Modifierad stärkelse från växter
+Acetylerad distärkelseadipat,E1422,Modifierad stärkelse från växter
+Hydroxipropylstärkelse,E1440,Modifierad stärkelse från växter
+Hydroxipropyldistärkelsefosfat,E1442,Modifierad stärkelse från växter
+Stärkelsenatriumoktenylsuccinat,E1450,Modifierad stärkelse från växter
+Acetylerad oxiderad stärkelse,E1451,Modifierad stärkelse från växter
+Stärkelseoktenylsuccinat,E1452,Modifierad stärkelse från växter
+Cellulosa,E1505,Modifierad cellulosa från växter
+Trietylcitrat,E1510,Växtbaserad emulgator
+Glyceryldiacetat,E1517,Växtbaserad emulgator
+Glyceryltriacetat,E1518,Växtbaserad emulgator
+Propylenglykol,E1520,Syntetisk fuktighetsbevarande medel

@@ -43,7 +43,7 @@ export class VideoAnalysisService {
     this.tempDir = path.join(os.tmpdir(), 'koalens-videos');
     if (!fs.existsSync(this.tempDir)) {
       fs.mkdirSync(this.tempDir, { recursive: true });
-      logger.info('Created temporary directory for video processing', { tempDir: this.tempDir });
+      logger.debug('Created temporary directory for video processing', { tempDir: this.tempDir });
     }
     
     this.videoOptimizer = new VideoOptimizer();
@@ -254,7 +254,7 @@ Om du inte kan identifiera några ingredienser, svara med:
         try {
           parsedResult = JSON.parse(sanitizedJson);
           logger.debug('Parsed JSON result', { 
-            fullParsedResult: JSON.stringify(parsedResult)
+            resultKeys: Object.keys(parsedResult)
           });
         } catch (jsonError) {
           // Om JSON-parsning misslyckas, försök med en mindre strikt approach
@@ -317,9 +317,11 @@ Om du inte kan identifiera några ingredienser, svara med:
         };
       }
       
-      // Additional logging for debugging
-      logger.info('Parsed ingredients data', { 
-        ingredientsData: JSON.stringify(parsedResult.ingredients)
+      // Additional logging for debugging - Ändra till debug och logga bara antal + status
+      logger.debug('Parsed ingredients data summary', { 
+        ingredientCount: parsedResult.ingredients.length,
+        finalIsVegan: parsedResult.isVegan, // Använd den omberäknade isVegan från senare i koden
+        finalIsUncertain: parsedResult.isUncertain // Använd den omberäknade isUncertain från senare i koden
       });
       
       // Re-evaluate overall vegan status based on corrected ingredients
@@ -330,22 +332,17 @@ Om du inte kan identifiera några ingredienser, svara med:
       let isUncertain = false;
       
       if (hasNonVegan) {
-        // Om det finns definitiva icke-veganska ingredienser är produkten inte vegansk
         isVegan = false;
         isUncertain = false;
       } else if (hasUncertain) {
-        // Om det finns osäkra ingredienser men inga definitiva icke-veganska,
-        // markerar vi produkten som "osäker"
         isVegan = false;
         isUncertain = true;
-      } else if (nonVeganIngredients.length === 0) {
-        // Om det inte finns några icke-veganska eller osäkra ingredienser,
-        // markeras produkten som vegansk
+      } else if (nonVeganIngredients.length === 0) { // Använd den filtrerade listan här
         isVegan = true;
         isUncertain = false;
       } else {
-        // Annars, om AI har klassat några ingredienser som icke-veganska
-        // som vi inte har korrigerat, markeras produkten som icke-vegansk
+        // Denna else-sats bör troligen inte kunna nås om hasNonVegan är korrekt satt
+        // men behåller för säkerhets skull
         isVegan = false;
         isUncertain = false;
       }
@@ -442,11 +439,11 @@ Om du inte kan identifiera några ingredienser, svara med:
   }
   
   /**
-   * Validate and correct ingredient classifications using our database
-   * @param ingredients List of ingredients to validate
-   * @returns Information om produktens veganska status baserat på ingredienserna
+   * Validate ingredient classifications against known databases
+   * @param ingredients List of ingredients with AI classification
+   * @returns Flags indicating if non-vegan or uncertain ingredients were found
    */
-  private validateIngredients(ingredients: any[]): {
+  private validateIngredients(ingredients: IngredientAnalysisResult[]): {
     hasNonVegan: boolean;
     hasUncertain: boolean;
     uncertainReasons: string[];
@@ -468,51 +465,81 @@ Om du inte kan identifiera några ingredienser, svara med:
       
       // Store original values for logging
       const originalIsVegan = ingredient.isVegan;
+      const originalIsUncertain = ingredient.isUncertain;
       
-      // Check against our database of known ingredients
-      const { isVegan, isUncertain, reason } = checkIngredientStatus(ingredient.name);
+      // Check against our database (non-vegan -> uncertain -> vegan)
+      const dbStatus = checkIngredientStatus(ingredient.name);
       
       // Uppdatera ingrediensens status baserat på databasen
-      if (isVegan !== null) {
-        // Vi har definitiv information (vegansk eller icke-vegansk)
-        ingredient.isVegan = isVegan;
-        ingredient.confidence = 0.98; // High confidence for database matches
-        
-        // Markera om produkten innehåller icke-veganska ingredienser
-        if (!isVegan) {
-          hasNonVegan = true;
-        }
-        
-        // Log if we corrected the AI's classification
-        if (originalIsVegan !== ingredient.isVegan) {
+      if (dbStatus.isVegan === false) {
+        // Definitivt icke-vegansk enligt databas
+        if (ingredient.isVegan !== false || ingredient.isUncertain === true) {
           logIngredientCorrection({
             ingredient: ingredient.name,
             originalStatus: originalIsVegan,
-            correctedStatus: ingredient.isVegan,
-            reason: 'Database match',
-            confidence: ingredient.confidence
+            correctedStatus: false,
+            reason: `Database match (Non-Vegan): ${dbStatus.reason}`,
+            confidence: 0.99
           });
         }
-      } else if (isUncertain) {
-        // Vi är osäkra på denna ingrediens (kan vara vegansk eller ej)
-        ingredient.isVegan = false; // Sätt till false för säkerhets skull i gränssnittet
-        ingredient.isUncertain = true; // Markera att denna ingrediens är osäker
-        hasUncertain = true;
+        ingredient.isVegan = false;
+        ingredient.isUncertain = false; 
+        ingredient.confidence = 0.99;
+        hasNonVegan = true;
         
-        // Spara anledningen till osäkerheten
-        if (reason && !uncertainReasons.includes(reason)) {
-          uncertainReasons.push(reason);
+      } else if (dbStatus.isUncertain === true) {
+        // Osäker enligt databas
+        if (ingredient.isUncertain !== true) {
+          logIngredientCorrection({
+            ingredient: ingredient.name,
+            originalStatus: originalIsVegan,
+            correctedStatus: false, // Treat uncertain as potentially non-vegan
+            isUncertain: true,
+            reason: `Database match (Uncertain): ${dbStatus.reason}`,
+            confidence: 0.5 // Lower confidence for uncertain
+          });
         }
-        
-        // Log att vi markerade ingrediensen som osäker
-        logIngredientCorrection({
-          ingredient: ingredient.name,
-          originalStatus: originalIsVegan,
-          correctedStatus: false,
-          isUncertain: true,
-          reason: reason || 'Uncertain ingredient',
-          confidence: 0.5
-        });
+        ingredient.isVegan = false; // Default uncertain to non-vegan for safety
+        ingredient.isUncertain = true;
+        ingredient.confidence = 0.5;
+        hasUncertain = true;
+        if (dbStatus.reason && !uncertainReasons.includes(dbStatus.reason)) {
+          uncertainReasons.push(dbStatus.reason);
+        }
+
+      } else if (dbStatus.isVegan === true) {
+        // Definitivt vegansk enligt databas
+        if (ingredient.isVegan !== true || ingredient.isUncertain === true) {
+          logIngredientCorrection({
+            ingredient: ingredient.name,
+            originalStatus: originalIsVegan,
+            originalIsUncertain: originalIsUncertain, // Log if it was uncertain before
+            correctedStatus: true,
+            reason: `Database match (Vegan): ${dbStatus.reason}`,
+            confidence: 0.98
+          });
+        }
+        ingredient.isVegan = true;
+        ingredient.isUncertain = false;
+        ingredient.confidence = 0.98;
+        // Notera: Sätter inte hasNonVegan eller hasUncertain
+
+      } 
+      // Om ingen match i databasen (dbStatus.isVegan === null och dbStatus.isUncertain === false),
+      // behåll AI:ns ursprungliga klassificering.
+      // Uppdatera hasNonVegan/hasUncertain baserat på AI:ns klassificering om ingen DB-match.
+      else {
+          if (ingredient.isVegan === false && !ingredient.isUncertain) {
+              hasNonVegan = true;
+          }
+          if (ingredient.isUncertain === true) {
+              hasUncertain = true;
+              // Om AI markerade som osäker men vi inte har anledning, lägg till generell anledning
+              const genericReason = `${ingredient.name} markerades som osäker av AI`;
+              if (!uncertainReasons.some(r => r.startsWith(ingredient.name))) {
+                  uncertainReasons.push(genericReason);
+              }
+          }
       }
     }
     

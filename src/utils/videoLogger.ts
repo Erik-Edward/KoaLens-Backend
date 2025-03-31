@@ -94,6 +94,7 @@ export function logVideoAnalysisResponse(details: {
 export function logIngredientCorrection(details: {
   ingredient: string;
   originalStatus: boolean;
+  originalIsUncertain?: boolean;
   correctedStatus: boolean;
   isUncertain?: boolean;
   reason: string;
@@ -106,6 +107,7 @@ export function logIngredientCorrection(details: {
     operation,
     ingredient: details.ingredient,
     originalStatus: details.originalStatus,
+    originalIsUncertain: details.originalIsUncertain,
     correctedStatus: details.correctedStatus,
     isUncertain: details.isUncertain || false,
     reason: details.reason,

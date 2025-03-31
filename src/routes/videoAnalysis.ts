@@ -2,8 +2,6 @@ import { Router, Request, Response, RequestHandler } from 'express';
 import { logger } from '../utils/logger';
 import videoAnalysisService from '../services/videoAnalysisService';
 import { 
-  knownVeganIngredients, 
-  knownNonVeganIngredients,
   ingredientTranslations
 } from '../utils/ingredientsDatabase';
 
@@ -301,8 +299,8 @@ router.get('/ingredients', (async (_req: Request, res: Response) => {
     res.status(200).json({
       success: true,
       data: {
-        veganIngredients: knownVeganIngredients,
-        nonVeganIngredients: knownNonVeganIngredients,
+        veganIngredients: [],
+        nonVeganIngredients: [],
         translations: ingredientTranslations
       }
     });
