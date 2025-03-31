@@ -5,31 +5,28 @@ import { v4 as uuidv4 } from 'uuid';
 import { logger } from '../utils/logger';
 import { VideoOptimizer } from '../utils/videoOptimizer';
 import geminiService from './geminiService';
-import { 
-  isIngredientVegan, 
-  translateToSwedish
-} from '../utils/ingredientsDatabase';
 import {
   logVideoAnalysisRequest,
   logVideoAnalysisResponse,
   logIngredientCorrection
 } from '../utils/videoLogger';
+import { checkIngredientStatus } from '../utils/ingredientsDatabase';
 
 // Type definitions (borrowed from ../types/analysisTypes.ts)
 interface IngredientAnalysisResult {
   name: string;
   isVegan: boolean;
   confidence: number;
-  originalName?: string; // Original name before translation (if different)
-  detectedLanguage?: string; // Language this ingredient was detected in
+  isUncertain?: boolean; // Markerar om ingrediensen är osäker (kan vara vegansk eller ej)
 }
 
 interface VideoAnalysisResult {
   ingredients: IngredientAnalysisResult[];
   isVegan: boolean;
+  isUncertain?: boolean; // Ny status för osäkra produkter
   confidence: number;
-  detectedLanguages?: string[]; // Languages detected on packaging
   reasoning?: string; // Explanation for vegan classification
+  uncertainReasons?: string[]; // Anledningar till osäker status
 }
 
 /**
@@ -153,9 +150,36 @@ export class VideoAnalysisService {
           attemptCount++;
           // Simplify prompt for retry
           const simplifiedPrompt = `
-Analyze this food product image. List all ingredients you can see. 
-For each ingredient, indicate if it's vegan (true) or non-vegan (false).
-Format your response as JSON with ingredients array, each with name, isVegan, and confidence fields.
+Analysera denna matprodukt. Lista alla ingredienser du kan se på förpackningen. 
+Översätt ingredienserna till svenska.
+För varje ingrediens, ange om den är vegansk (true) eller icke-vegansk (false).
+
+Ingredienser som kommer från djur är icke-veganska: ägg, mjölk, ost, kött, fisk, gelatin, honung.
+Växtbaserade ingredienser är veganska: soja, tofu, grönsaker, frukt, nötter, frön.
+
+Svara med ENDAST ett JSON-objekt i detta format:
+\`\`\`json
+{
+  "ingredients": [
+    {
+      "name": "ingrediensnamn på svenska",
+      "isVegan": true/false,
+      "confidence": 0.5
+    }
+  ],
+  "isVegan": true/false,
+  "confidence": 0.5
+}
+\`\`\`
+
+Om du inte kan identifiera några ingredienser, svara med:
+\`\`\`json
+{
+  "ingredients": [],
+  "isVegan": false,
+  "confidence": 0.0
+}
+\`\`\`
 `;
           const aiResponse = await geminiService.generateContentFromVideo(simplifiedPrompt, videoBase64, 'video/mp4');
           result = this.parseAnalysisResult(aiResponse);
@@ -169,8 +193,9 @@ Format your response as JSON with ingredients array, each with name, isVegan, an
         processingTimeSec: (Date.now() - new Date().getTime()) / 1000,
         ingredientCount: result.ingredients.length,
         isVegan: result.isVegan,
+        isUncertain: result.isUncertain || false,
         confidenceScore: result.confidence,
-        detectedLanguages: result.detectedLanguages,
+        uncertainIngredientsCount: result.ingredients.filter((i: IngredientAnalysisResult) => i.isUncertain).length,
         statusCode: 200
       });
       
@@ -184,7 +209,9 @@ Format your response as JSON with ingredients array, each with name, isVegan, an
         processingTimeSec: (Date.now() - new Date().getTime()) / 1000,
         ingredientCount: 0,
         isVegan: false,
+        isUncertain: false,
         confidenceScore: 0,
+        uncertainIngredientsCount: 0,
         statusCode: 500,
         errorMessage: error.message
       });
@@ -214,12 +241,26 @@ Format your response as JSON with ingredients array, each with name, isVegan, an
       if (jsonMatch) {
         // Extract the JSON content from the match
         const jsonContent = jsonMatch[1] || jsonMatch[0];
-        parsedResult = JSON.parse(jsonContent);
+        // Sanera JSON-strängen - ta bort oönskade tecken som kan orsaka parsningsfel
+        const sanitizedJson = jsonContent
+          .replace(/\n/g, ' ')
+          .replace(/\r/g, ' ')
+          .replace(/\t/g, ' ')
+          .replace(/\\/g, '\\\\')
+          .replace(/"/g, '\\"')
+          .replace(/true\/false/g, 'true') // Ersätt instruktionstext (om den finns)
+          .replace(/0\.0-1\.0/g, '0.5');   // Ersätt instruktionstext (om den finns)
         
-        // Log the parsed JSON for debugging
-        logger.debug('Parsed JSON result', { 
-          fullParsedResult: JSON.stringify(parsedResult)
-        });
+        try {
+          parsedResult = JSON.parse(sanitizedJson);
+          logger.debug('Parsed JSON result', { 
+            fullParsedResult: JSON.stringify(parsedResult)
+          });
+        } catch (jsonError) {
+          // Om JSON-parsning misslyckas, försök med en mindre strikt approach
+          logger.warn('JSON parsing failed, trying to extract with regex', { jsonError });
+          parsedResult = this.extractWithRegex(jsonContent);
+        }
       } else {
         // If no JSON found, try to extract information from text
         logger.warn('No JSON found in AI response, using fallback parser');
@@ -232,6 +273,7 @@ Format your response as JSON with ingredients array, each with name, isVegan, an
       
       // Validate the structure
       if (!parsedResult.ingredients || !Array.isArray(parsedResult.ingredients)) {
+        logger.warn('No ingredients found or invalid structure, creating empty array');
         parsedResult.ingredients = [];
       }
       
@@ -240,23 +282,40 @@ Format your response as JSON with ingredients array, each with name, isVegan, an
         if (typeof parsedResult.isVegan === 'string') {
           parsedResult.isVegan = parsedResult.isVegan.toLowerCase() === 'true';
         } else {
-          parsedResult.isVegan = false; // Default
+          // Om inga ingredienser eller om vi inte har ett isVegan-värde, 
+          // behandla som icke-vegansk för säkerhets skull
+          parsedResult.isVegan = parsedResult.ingredients.length > 0 ? false : false;
         }
       }
       
       // Ensure confidence is a number between 0 and 1
       if (typeof parsedResult.confidence !== 'number' || parsedResult.confidence < 0 || parsedResult.confidence > 1) {
-        parsedResult.confidence = 0.5; // Default
+        parsedResult.confidence = parsedResult.ingredients.length > 0 ? 0.5 : 0.0;
       }
       
-      // Store detected languages if available
-      const detectedLanguages = parsedResult.detectedLanguages || [];
+      // För loggning, spara detekterade språk om de finns
+      const detectedLanguages = parsedResult.detectedLanguages;
+      if (detectedLanguages && Array.isArray(detectedLanguages) && detectedLanguages.length > 0) {
+        logger.debug('Languages detected by AI', { detectedLanguages });
+      }
       
       // Validate and correct ingredient classifications using our database
-      this.validateIngredients(parsedResult.ingredients);
+      const { hasNonVegan, hasUncertain, uncertainReasons } = this.validateIngredients(parsedResult.ingredients);
       
-      // Process multilingual ingredients (deduplicate and translate)
+      // Process and deduplicate ingredients
       this.processMultilingualIngredients(parsedResult.ingredients, detectedLanguages);
+      
+      // Om vi fortfarande inte har några ingredienser, returnera ett tomt resultat
+      if (parsedResult.ingredients.length === 0) {
+        logger.warn('No ingredients found after processing');
+        return {
+          ingredients: [],
+          isVegan: false,
+          isUncertain: false,
+          confidence: 0.0,
+          reasoning: 'Inga ingredienser kunde identifieras'
+        };
+      }
       
       // Additional logging for debugging
       logger.info('Parsed ingredients data', { 
@@ -265,25 +324,144 @@ Format your response as JSON with ingredients array, each with name, isVegan, an
       
       // Re-evaluate overall vegan status based on corrected ingredients
       const nonVeganIngredients = parsedResult.ingredients.filter((i: any) => !i.isVegan);
-      parsedResult.isVegan = nonVeganIngredients.length === 0;
       
-      return parsedResult as VideoAnalysisResult;
+      // Bestäm den slutliga statusen för produkten
+      let isVegan = false;
+      let isUncertain = false;
+      
+      if (hasNonVegan) {
+        // Om det finns definitiva icke-veganska ingredienser är produkten inte vegansk
+        isVegan = false;
+        isUncertain = false;
+      } else if (hasUncertain) {
+        // Om det finns osäkra ingredienser men inga definitiva icke-veganska,
+        // markerar vi produkten som "osäker"
+        isVegan = false;
+        isUncertain = true;
+      } else if (nonVeganIngredients.length === 0) {
+        // Om det inte finns några icke-veganska eller osäkra ingredienser,
+        // markeras produkten som vegansk
+        isVegan = true;
+        isUncertain = false;
+      } else {
+        // Annars, om AI har klassat några ingredienser som icke-veganska
+        // som vi inte har korrigerat, markeras produkten som icke-vegansk
+        isVegan = false;
+        isUncertain = false;
+      }
+      
+      // Ta bort detectedLanguages om det finns kvar i resultatet
+      delete parsedResult.detectedLanguages;
+      
+      // Skapa reasoning-text baserat på vegan-status och osäkerhet
+      let reasoning = '';
+      if (isVegan) {
+        reasoning = 'Alla ingredienser är veganska';
+      } else if (isUncertain) {
+        reasoning = 'Osäker vegan-status: ' + uncertainReasons.join('; ');
+      } else if (nonVeganIngredients.length > 0) {
+        const nonVeganNames = nonVeganIngredients.map((i: IngredientAnalysisResult) => i.name).join(', ');
+        reasoning = `Innehåller icke-veganska ingredienser: ${nonVeganNames}`;
+      }
+      
+      return {
+        ...parsedResult,
+        isVegan,
+        isUncertain,
+        uncertainReasons: uncertainReasons.length > 0 ? uncertainReasons : undefined,
+        reasoning: reasoning || parsedResult.reasoning
+      } as VideoAnalysisResult;
     } catch (error) {
       logger.error('Error parsing analysis result', { error });
-      throw new Error('Failed to parse analysis result from AI');
+      // Returnera ett tomt men giltigt resultat vid fel
+      return {
+        ingredients: [],
+        isVegan: false,
+        isUncertain: false,
+        confidence: 0.0,
+        reasoning: 'Ett fel uppstod vid analys av ingredienser'
+      };
     }
+  }
+  
+  /**
+   * Försök extrahera JSON med regex när vanlig parsning misslyckas
+   */
+  private extractWithRegex(text: string): any {
+    const result: any = {
+      ingredients: [],
+      isVegan: false,
+      confidence: 0.5
+    };
+    
+    // Försök hitta ingredienslistan
+    const ingredientsMatch = text.match(/"ingredients"\s*:\s*\[([\s\S]*?)\]/);
+    if (ingredientsMatch && ingredientsMatch[1]) {
+      // Hitta alla individuella ingrediensobjekt
+      const ingredientMatches = ingredientsMatch[1].match(/{[\s\S]*?}/g);
+      if (ingredientMatches) {
+        ingredientMatches.forEach(ingredientText => {
+          try {
+            // Extrahera namn
+            const nameMatch = ingredientText.match(/"name"\s*:\s*"([^"]*)"/);
+            // Extrahera isVegan
+            const isVeganMatch = ingredientText.match(/"isVegan"\s*:\s*(true|false)/);
+            // Extrahera confidence
+            const confidenceMatch = ingredientText.match(/"confidence"\s*:\s*([0-9.]*)/);
+            
+            if (nameMatch && nameMatch[1]) {
+              const ingredient = {
+                name: nameMatch[1],
+                isVegan: isVeganMatch && isVeganMatch[1] === 'true' ? true : false,
+                confidence: confidenceMatch && !isNaN(parseFloat(confidenceMatch[1])) 
+                  ? parseFloat(confidenceMatch[1]) 
+                  : 0.5
+              };
+              result.ingredients.push(ingredient);
+            }
+          } catch (e) {
+            logger.warn('Failed to parse ingredient with regex', { ingredientText, error: e });
+          }
+        });
+      }
+    }
+    
+    // Extrahera isVegan för hela produkten
+    const isVeganMatch = text.match(/"isVegan"\s*:\s*(true|false)/);
+    if (isVeganMatch && isVeganMatch[1]) {
+      result.isVegan = isVeganMatch[1] === 'true';
+    }
+    
+    // Extrahera confidence för hela produkten
+    const confidenceMatch = text.match(/"confidence"\s*:\s*([0-9.]*)/);
+    if (confidenceMatch && !isNaN(parseFloat(confidenceMatch[1]))) {
+      result.confidence = parseFloat(confidenceMatch[1]);
+    }
+    
+    return result;
   }
   
   /**
    * Validate and correct ingredient classifications using our database
    * @param ingredients List of ingredients to validate
+   * @returns Information om produktens veganska status baserat på ingredienserna
    */
-  private validateIngredients(ingredients: any[]): void {
-    if (!ingredients || !Array.isArray(ingredients)) return;
+  private validateIngredients(ingredients: any[]): {
+    hasNonVegan: boolean;
+    hasUncertain: boolean;
+    uncertainReasons: string[];
+  } {
+    if (!ingredients || !Array.isArray(ingredients)) {
+      return { hasNonVegan: false, hasUncertain: false, uncertainReasons: [] };
+    }
     
     logger.debug('Validating ingredient classifications', { 
       ingredientCount: ingredients.length 
     });
+    
+    let hasNonVegan = false;
+    let hasUncertain = false;
+    const uncertainReasons: string[] = [];
     
     for (const ingredient of ingredients) {
       if (!ingredient.name) continue;
@@ -292,12 +470,18 @@ Format your response as JSON with ingredients array, each with name, isVegan, an
       const originalIsVegan = ingredient.isVegan;
       
       // Check against our database of known ingredients
-      const veganStatus = isIngredientVegan(ingredient.name);
+      const { isVegan, isUncertain, reason } = checkIngredientStatus(ingredient.name);
       
-      // Only override if we have definitive knowledge about this ingredient
-      if (veganStatus !== null) {
-        ingredient.isVegan = veganStatus;
+      // Uppdatera ingrediensens status baserat på databasen
+      if (isVegan !== null) {
+        // Vi har definitiv information (vegansk eller icke-vegansk)
+        ingredient.isVegan = isVegan;
         ingredient.confidence = 0.98; // High confidence for database matches
+        
+        // Markera om produkten innehåller icke-veganska ingredienser
+        if (!isVegan) {
+          hasNonVegan = true;
+        }
         
         // Log if we corrected the AI's classification
         if (originalIsVegan !== ingredient.isVegan) {
@@ -309,70 +493,83 @@ Format your response as JSON with ingredients array, each with name, isVegan, an
             confidence: ingredient.confidence
           });
         }
+      } else if (isUncertain) {
+        // Vi är osäkra på denna ingrediens (kan vara vegansk eller ej)
+        ingredient.isVegan = false; // Sätt till false för säkerhets skull i gränssnittet
+        ingredient.isUncertain = true; // Markera att denna ingrediens är osäker
+        hasUncertain = true;
+        
+        // Spara anledningen till osäkerheten
+        if (reason && !uncertainReasons.includes(reason)) {
+          uncertainReasons.push(reason);
+        }
+        
+        // Log att vi markerade ingrediensen som osäker
+        logIngredientCorrection({
+          ingredient: ingredient.name,
+          originalStatus: originalIsVegan,
+          correctedStatus: false,
+          isUncertain: true,
+          reason: reason || 'Uncertain ingredient',
+          confidence: 0.5
+        });
       }
     }
+    
+    return { hasNonVegan, hasUncertain, uncertainReasons };
   }
   
   /**
-   * Process multilingual ingredients to deduplicate and translate to Swedish
+   * Process ingredients to ensure they are in Swedish and deduplicated
    * @param ingredients List of ingredients to process
-   * @param detectedLanguages Languages detected on the packaging
    */
-  private processMultilingualIngredients(ingredients: any[], detectedLanguages: string[]): void {
+  private processMultilingualIngredients(ingredients: any[], detectedLanguages?: string[]): void {
     if (!ingredients || !Array.isArray(ingredients) || ingredients.length === 0) return;
     
     // Set to track processed ingredient names (case-insensitive)
     const processedNames = new Set<string>();
     const uniqueIngredients: any[] = [];
     
-    // Map to store best translation for each ingredient
-    const translationMap = new Map<string, any>();
+    // För debugging, logga originalspråken om de identifierats
+    if (detectedLanguages && detectedLanguages.length > 0) {
+      logger.debug('Detected languages on packaging (for internal logging only)', {
+        detectedLanguages
+      });
+    }
     
     // Process each ingredient
     for (const ingredient of ingredients) {
       if (!ingredient.name) continue;
       
-      // Try to translate to Swedish
-      const originalName = ingredient.name;
-      const translatedName = translateToSwedish(originalName);
+      // Normalisera namn för avduplikering
+      const normalizedName = ingredient.name.toLowerCase().trim();
       
-      // Normalize for deduplication
-      const normalizedName = translatedName.toLowerCase().trim();
-      
-      // If we already have this ingredient (after translation), skip it
+      // Om vi redan har denna ingrediens, hoppa över den (efter normalisering)
       if (processedNames.has(normalizedName)) {
-        // If we have a higher confidence value, update the existing entry
-        const existing = translationMap.get(normalizedName);
-        if (existing && ingredient.confidence > existing.confidence) {
-          existing.confidence = ingredient.confidence;
-          existing.isVegan = ingredient.isVegan;
-        }
         continue;
       }
       
-      // Mark as processed
+      // Markera som bearbetad
       processedNames.add(normalizedName);
       
-      // Create a new ingredient object with translation
+      // Ta bort eventuella originalName och detectedLanguage fält
+      // eftersom vi inte längre skickar den informationen till frontend
       const processedIngredient = {
-        ...ingredient,
-        name: translatedName,
-        originalName: originalName !== translatedName ? originalName : undefined
+        name: ingredient.name,
+        isVegan: ingredient.isVegan,
+        confidence: ingredient.confidence
       };
       
-      // Store in map and unique list
-      translationMap.set(normalizedName, processedIngredient);
+      // Lägg till i den unika listan
       uniqueIngredients.push(processedIngredient);
     }
     
-    // Replace the original array with deduplicated ingredients
+    // Ersätt originallistan med deduplikerade ingredienser
     ingredients.length = 0;
     ingredients.push(...uniqueIngredients);
     
-    logger.debug('Processed multilingual ingredients', {
-      originalCount: processedNames.size,
-      finalCount: uniqueIngredients.length,
-      detectedLanguages
+    logger.debug('Processed ingredients', {
+      finalCount: uniqueIngredients.length
     });
   }
   
@@ -386,6 +583,7 @@ Format your response as JSON with ingredients array, each with name, isVegan, an
     const lines = text.split('\n');
     let inIngredientList = false;
     
+    // Först, försök hitta en struktur som liknar en ingredienslista
     for (const line of lines) {
       const trimmedLine = line.trim();
       
@@ -410,66 +608,163 @@ Format your response as JSON with ingredients array, each with name, isVegan, an
         
         // Parse the ingredient line
         let ingredientName = trimmedLine;
-        // Remove list markers
-        ingredientName = ingredientName.replace(/^[-*]\s*/, '');
         
-        // Check for vegan status in the line
-        const isVegan = !ingredientName.toLowerCase().includes('non-vegan') && 
-                        !ingredientName.toLowerCase().includes('animal');
+        // Remove list markers if they exist
+        ingredientName = ingredientName.replace(/^[-*•]\s*/, '');
         
-        ingredientsList.push({
-          name: ingredientName,
-          isVegan: isVegan,
-          confidence: 0.7 // Default confidence for this extraction method
-        });
+        // Look for vegan indicators in the line
+        let isVegan = true; // Default to vegan
+        
+        // Kolla efter icke-veganska indikatorer
+        if (ingredientName.toLowerCase().includes('non-vegan') || 
+            ingredientName.toLowerCase().includes('animal') ||
+            ingredientName.toLowerCase().includes('mjölk') ||
+            ingredientName.toLowerCase().includes('ägg') ||
+            ingredientName.toLowerCase().includes('ost') ||
+            ingredientName.toLowerCase().includes('smör') ||
+            ingredientName.toLowerCase().includes('honung') ||
+            ingredientName.toLowerCase().includes('gelatin')) {
+          isVegan = false;
+        }
+        
+        // Om namnet innehåller information om vegansk status, rensa namnet
+        ingredientName = ingredientName
+          .replace(/\(vegansk\)/i, '')
+          .replace(/\(icke-vegansk\)/i, '')
+          .replace(/\(non-vegan\)/i, '')
+          .replace(/\(vegan\)/i, '')
+          .trim();
+        
+        // Försök identifiera ett konfidenstal om det finns
+        let confidence = 0.7; // Default
+        const confidenceMatch = ingredientName.match(/\(konfidensgrad:?\s*([0-9.]+)\)/i);
+        if (confidenceMatch && confidenceMatch[1]) {
+          const parsedConfidence = parseFloat(confidenceMatch[1]);
+          if (!isNaN(parsedConfidence)) {
+            confidence = parsedConfidence <= 1 ? parsedConfidence : parsedConfidence / 100;
+            // Ta bort konfidenstexten från namnet
+            ingredientName = ingredientName.replace(/\(konfidensgrad:?\s*[0-9.]+\)/i, '').trim();
+          }
+        }
+        
+        // Lägg till ingrediensen om vi har ett meningsfullt namn
+        if (ingredientName && ingredientName.length > 1) {
+          ingredientsList.push({
+            name: ingredientName,
+            isVegan: isVegan,
+            confidence: confidence
+          });
+        }
       }
     }
     
-    return ingredientsList;
+    // Fallback: Om vi inte hittade någon ingredienslista, försök identifiera individuella ingredienser
+    if (ingredientsList.length === 0) {
+      // Vanliga inledare för ingredienssektioner
+      const ingredientKeywords = [
+        'ingredienser:', 'ingredients:', 'innehåll:', 'innehåller:',
+        'ingredienser är:', 'ingredients are:'
+      ];
+      
+      // Hitta en potentiell ingredienssektion
+      let ingredientSection = '';
+      for (const keyword of ingredientKeywords) {
+        const keywordIndex = text.toLowerCase().indexOf(keyword);
+        if (keywordIndex !== -1) {
+          ingredientSection = text.substring(keywordIndex + keyword.length);
+          break;
+        }
+      }
+      
+      if (ingredientSection) {
+        // Dela upp texten och hitta potentiella ingredienser
+        const items = ingredientSection.split(/[,.;:\n()\/]+/);
+        for (const item of items) {
+          const trimmedItem = item.trim();
+          // Ignorera för korta strängar och siffror
+          if (trimmedItem.length > 2 && !/^\d+$/.test(trimmedItem)) {
+            // Kolla om denna ingrediens är vegansk baserat på vissa nyckelord
+            const isVegan = !(
+              trimmedItem.toLowerCase().includes('mjölk') ||
+              trimmedItem.toLowerCase().includes('ägg') ||
+              trimmedItem.toLowerCase().includes('ost') ||
+              trimmedItem.toLowerCase().includes('kött') ||
+              trimmedItem.toLowerCase().includes('fisk') ||
+              trimmedItem.toLowerCase().includes('honung') ||
+              trimmedItem.toLowerCase().includes('gelatin')
+            );
+            
+            ingredientsList.push({
+              name: trimmedItem,
+              isVegan: isVegan,
+              confidence: 0.6 // Lägre konfidensgrad för denna fallback-metod
+            });
+            
+            // Begränsa till 20 ingredienser för att undvika att hitta för många falska positiva
+            if (ingredientsList.length >= 20) break;
+          }
+        }
+      }
+    }
+    
+    // Rensa och deduplicera för säkerhets skull
+    const uniqueIngredients: IngredientAnalysisResult[] = [];
+    const seenNames = new Set<string>();
+    
+    for (const ingredient of ingredientsList) {
+      const normalizedName = ingredient.name.toLowerCase().trim();
+      if (normalizedName && !seenNames.has(normalizedName)) {
+        seenNames.add(normalizedName);
+        uniqueIngredients.push(ingredient);
+      }
+    }
+    
+    logger.debug('Extracted ingredients from text response', {
+      extractedCount: uniqueIngredients.length
+    });
+    
+    return uniqueIngredients;
   }
   
   /**
    * Build a prompt for the AI to analyze food product ingredients
-   * Enhanced to properly handle veganism classification and multilingual packaging
+   * Optimized based on recommendations for clarity and precision
    */
-  private buildAnalysisPrompt(language: string): string {
-    // Prompt optimized for Gemini to handle multilingual ingredients and vegan classification
-    if (language === 'sv') {
-      return `
-Du är en expert på att analysera matprodukter och identifiera deras ingredienser.
+  private buildAnalysisPrompt(_language: string): string {
+    // Vi använder svenska oavsett valt språk för konsekvent output
+    return `
+Du är en expert på att analysera matprodukter och identifiera deras ingredienser för att avgöra om produkten är vegansk.
 
 INSTRUKTIONER:
-1. Analysera videon NOGGRANT. Leta efter alla ingredienser som visas på förpackningen.
-2. Titta igenom hela videon. Om det finns en ingredienslista eller näringsinnehåll, fokusera på den.
-3. Identifiera ALLA ord i ingredienslistan. Var extra uppmärksam på korta ingredienser som "salt", "olja", "vatten", etc.
-4. Var speciellt noggrann med att identifiera alla animaliska ingredienser.
-5. VIKTIGT: Var mycket noggrann med veganska bedömningar. Markera endast ingredienser som "isVegan": false om de DEFINITIVT kommer från djur.
-   - Animaliska ingredienser inkluderar: ägg, mjölk, ost, grädde, kött, fisk, gelatin, honung, etc.
-   - Växtbaserade ingredienser som sojabaserade produkter (tofu, tempeh, sojasås, etc) är ALLTID veganska.
-6. Om det finns flera språk på förpackningen:
-   - Identifiera den svenska ingredienslistan om möjligt
-   - Undvik att lista samma ingrediens flera gånger på olika språk
-   - Ge alltid den svenska versionen om tillgänglig, annars originalet
-   - Varje ingrediens ska endast listas en gång (ingen duplicering)
+1. Analysera videon NOGGRANT. Identifiera ingredienserna som tydligt VISAS på produktens förpackning.
+2. Fokusera på ingredienslistan i videon.
+3. Översätt ALLA identifierade ingredienser till svenska. Använd vanliga svenska livsmedelsnamn.
+4. Bedöm om produkten är vegansk. En ingrediens är *inte* vegansk om den *definitivt* kommer från djur.
+   - Icke-veganska ingredienser: ägg, mjölk, ost, grädde, kött, fisk, gelatin, honung, bivax, lanolin, etc.
+   - Extra uppmärksam på E-nummer:
+     - E120 (karmin), E441 (gelatin), E901 (bivax), E904 (shellack), E920 (L-cystein) är INTE veganska.
+     - Andra E-nummer kan vara osäkra, men försök identifiera alla E-nummer du ser i ingredienslistan.
+   - Sojabaserade produkter (tofu, tempeh, sojasås, etc.) är ALLTID veganska.
+5. Lista varje identifierad ingrediens ENBART EN gång på svenska.
 
-SVARA ENDAST MED ETT JSON-OBJEKT i detta format:
+SVARA ENDAST med ett JSON-objekt i detta format (utan extra text före eller efter):
+
 \`\`\`json
 {
   "ingredients": [
     {
-      "name": "ingrediensnamn",
+      "name": "ingrediensnamn på svenska",
       "isVegan": true/false,
       "confidence": 0.0-1.0
-    },
-    ...
+    }
   ],
   "isVegan": true/false,
-  "confidence": 0.0-1.0,
-  "detectedLanguages": ["sv", "en", "de", ...] // Lista över språk du upptäckt på förpackningen
+  "confidence": 0.0-1.0
 }
 \`\`\`
 
-EXEMPEL PÅ KORREKT SVAR:
+Exempel på korrekt svar:
+
 \`\`\`json
 {
   "ingredients": [
@@ -484,74 +779,8 @@ EXEMPEL PÅ KORREKT SVAR:
       "confidence": 0.95
     },
     {
-      "name": "Salt",
-      "isVegan": true,
-      "confidence": 0.99
-    }
-  ],
-  "isVegan": true,
-  "confidence": 0.97,
-  "detectedLanguages": ["sv", "en"]
-}
-\`\`\`
-
-Se till att:
-1. ALLTID följa det exakta JSON-formatet
-2. Ordningen på fälten ska vara: "name", "isVegan", "confidence" för varje ingrediens
-3. Identifiera ALLA ingredienser, även de kortaste som "salt"
-4. Ange "confidence" som ett nummer mellan 0 och 1
-5. Inkludera ALLA ingredienser du kan identifiera i videon
-6. Undvika duplicerade ingredienser även om de nämns på flera språk
-7. Korrekta klassifikationer av veganska/icke-veganska ingredienser, särskilt för sojabaserade produkter
-`;
-    } else {
-      // Default to English with similar improvements
-      return `
-You are an expert at analyzing food products and identifying their ingredients.
-
-INSTRUCTIONS:
-1. Carefully analyze the video. Look for all ingredients shown on the packaging.
-2. Look through the entire video. If there's an ingredient list or nutritional information, focus on that.
-3. Identify ALL words in the ingredient list. Pay extra attention to short ingredients like "salt", "oil", "water", etc.
-4. Be especially thorough in identifying any animal-derived ingredients.
-5. IMPORTANT: Be very precise with vegan assessments. Only mark ingredients as "isVegan": false if they DEFINITELY come from animals.
-   - Animal ingredients include: eggs, milk, cheese, cream, meat, fish, gelatin, honey, etc.
-   - Plant-based ingredients like soy-based products (tofu, tempeh, soy sauce, etc.) are ALWAYS vegan.
-6. If multiple languages appear on the packaging:
-   - Identify the main language of the product
-   - Avoid listing the same ingredient multiple times in different languages
-   - If an ingredient appears in Swedish, prefer that version
-   - Each ingredient should only be listed once (no duplication)
-
-RESPOND ONLY WITH A JSON OBJECT in this format:
-\`\`\`json
-{
-  "ingredients": [
-    {
-      "name": "ingredient name",
-      "isVegan": true/false,
-      "confidence": 0.0-1.0
-    },
-    ...
-  ],
-  "isVegan": true/false,
-  "confidence": 0.0-1.0,
-  "detectedLanguages": ["en", "sv", "de", ...] // List of languages detected on packaging
-}
-\`\`\`
-
-EXAMPLE OF CORRECT RESPONSE:
-\`\`\`json
-{
-  "ingredients": [
-    {
-      "name": "Corn kernels",
-      "isVegan": true,
-      "confidence": 0.98
-    },
-    {
-      "name": "Palm oil",
-      "isVegan": true,
+      "name": "E471",
+      "isVegan": false,
       "confidence": 0.95
     },
     {
@@ -560,22 +789,30 @@ EXAMPLE OF CORRECT RESPONSE:
       "confidence": 0.99
     }
   ],
-  "isVegan": true,
-  "confidence": 0.97,
-  "detectedLanguages": ["en", "fr"]
+  "isVegan": false,
+  "confidence": 0.97
 }
 \`\`\`
 
-Make sure to:
-1. ALWAYS follow the exact JSON format
-2. The order of fields should be: "name", "isVegan", "confidence" for each ingredient
-3. Identify ALL ingredients, even the shortest ones like "salt"
-4. Specify "confidence" as a number between 0 and 1
-5. Include ALL ingredients you can identify in the video
-6. Avoid duplicate ingredients even if they appear in multiple languages
-7. Correctly classify vegan/non-vegan ingredients, especially for soy-based products
+Exempel på svar om inga ingredienser kan identifieras:
+
+\`\`\`json
+{
+  "ingredients": [],
+  "isVegan": false,
+  "confidence": 0.0
+}
+\`\`\`
+
+Se till att:
+1. Följa det exakta JSON-formatet UTAN extra text före eller efter.
+2. ALLTID översätta alla identifierade ingredienser till svenska.
+3. Ange "confidence" som ett nummer mellan 0 och 1.
+4. Markera ingredienser korrekt som veganska/icke-veganska.
+5. Inkludera ALLA identifierade ingredienser.
+6. Endast inkludera ingredienser som du FAKTISKT KAN SE i videon.
+7. Var extra uppmärksam på E-nummer och försök identifiera alla du ser.
 `;
-    }
   }
   
   /**

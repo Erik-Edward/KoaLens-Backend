@@ -2,6 +2,19 @@
  * Database of known vegan and non-vegan ingredients with translations
  * Used for validating and correcting AI-generated ingredient classifications
  */
+import * as fs from 'fs';
+import * as path from 'path';
+import { logger } from './logger';
+
+interface IngredientData {
+  name: string;
+  eNumber?: string;
+  description?: string;
+}
+
+// Cache for CSV data
+let nonVeganCache: IngredientData[] | null = null;
+let uncertainCache: IngredientData[] | null = null;
 
 // Known vegan ingredients, including processed soy products and plant-based foods
 export const knownVeganIngredients: string[] = [
@@ -20,7 +33,7 @@ export const knownVeganIngredients: string[] = [
   // Oils and fats
   'olivolja', 'rapsolja', 'solrosolja', 'sesamolja', 'kokosolja', 'linfröolja',
   // Sweeteners
-  'socker', 'agavesirap', 'lönnsirap', 'honung', 'fruktjuice',
+  'socker', 'agavesirap', 'lönnsirap', 'fruktjuice',
   // Miscellaneous
   'jäst', 'bakpulver', 'bikarbonat', 'salt', 'kryddor', 'örter', 'vinäger', 'surdeg',
   'alger', 'nori', 'spirulina', 'chlorella'
@@ -79,27 +92,159 @@ export const ingredientTranslations: Record<string, string[]> = {
 };
 
 /**
+ * Ladda icke-veganska ingredienser från CSV-filen
+ * @returns Lista med icke-veganska ingredienser
+ */
+export function loadNonVeganIngredients(): IngredientData[] {
+  if (nonVeganCache !== null) {
+    return nonVeganCache;
+  }
+
+  try {
+    const filePath = path.join(process.cwd(), 'src', 'data', 'non-vegan.csv');
+    const content = fs.readFileSync(filePath, 'utf8');
+    
+    const rows = content.split('\n').filter(row => row.trim() && !row.startsWith('"name,e_number'));
+    const ingredients: IngredientData[] = [];
+    
+    for (const row of rows) {
+      // Ta bort citattecken och separera fält
+      const cleanRow = row.replace(/^"|"$/g, '').replace(/","/g, '","');
+      const [name, eNumber, description] = cleanRow.split(',').map(field => 
+        field?.replace(/^"|"$/g, '') || ''
+      );
+      
+      if (name) {
+        ingredients.push({ name, eNumber, description });
+      }
+    }
+    
+    nonVeganCache = ingredients;
+    logger.info(`Loaded ${ingredients.length} non-vegan ingredients from database`);
+    return ingredients;
+  } catch (error) {
+    logger.error('Failed to load non-vegan ingredients database', { error });
+    return [];
+  }
+}
+
+/**
+ * Ladda osäkra ingredienser från CSV-filen
+ * @returns Lista med osäkra ingredienser
+ */
+export function loadUncertainIngredients(): IngredientData[] {
+  if (uncertainCache !== null) {
+    return uncertainCache;
+  }
+
+  try {
+    const filePath = path.join(process.cwd(), 'src', 'data', 'uncertain.csv');
+    const content = fs.readFileSync(filePath, 'utf8');
+    
+    const rows = content.split('\n').filter(row => row.trim() && !row.startsWith('"name,e_number'));
+    const ingredients: IngredientData[] = [];
+    
+    for (const row of rows) {
+      // Ta bort citattecken och separera fält
+      const cleanRow = row.replace(/^"|"$/g, '').replace(/","/g, '","');
+      const [name, eNumber, description] = cleanRow.split(',').map(field => 
+        field?.replace(/^"|"$/g, '') || ''
+      );
+      
+      if (name) {
+        ingredients.push({ name, eNumber, description });
+      }
+    }
+    
+    uncertainCache = ingredients;
+    logger.info(`Loaded ${ingredients.length} uncertain ingredients from database`);
+    return ingredients;
+  } catch (error) {
+    logger.error('Failed to load uncertain ingredients database', { error });
+    return [];
+  }
+}
+
+/**
+ * Kontrollera om en ingrediens är vegansk, icke-vegansk eller osäker
+ * @param ingredientName Ingrediensens namn att kontrollera
+ * @returns Objekt med {isVegan, isUncertain, reason}
+ */
+export function checkIngredientStatus(ingredientName: string): { 
+  isVegan: boolean | null,
+  isUncertain: boolean,
+  reason?: string
+} {
+  // Normalisera namn för jämförelse
+  const normalizedName = ingredientName.toLowerCase().trim();
+  
+  // Kontrollera efter E-nummer
+  const eNumberMatch = normalizedName.match(/e([0-9]{3,4}[a-z]?)/i);
+  let eNumber: string | null = null;
+  
+  if (eNumberMatch) {
+    eNumber = `E${eNumberMatch[1]}`;
+  }
+  
+  // Ladda databaser
+  const nonVeganList = loadNonVeganIngredients();
+  const uncertainList = loadUncertainIngredients();
+  
+  // Kontrollera om ingrediensen är känd icke-vegansk
+  const nonVeganMatch = nonVeganList.find(item => 
+    normalizedName.includes(item.name.toLowerCase()) || 
+    (eNumber && item.eNumber && item.eNumber.toLowerCase() === eNumber.toLowerCase())
+  );
+  
+  if (nonVeganMatch) {
+    return { 
+      isVegan: false, 
+      isUncertain: false,
+      reason: `Innehåller ${nonVeganMatch.name}${nonVeganMatch.description ? ` (${nonVeganMatch.description})` : ''}`
+    };
+  }
+  
+  // Kontrollera om ingrediensen är osäker
+  const uncertainMatch = uncertainList.find(item => 
+    normalizedName.includes(item.name.toLowerCase()) || 
+    (eNumber && item.eNumber && item.eNumber.toLowerCase() === eNumber.toLowerCase())
+  );
+  
+  if (uncertainMatch) {
+    return { 
+      isVegan: null, 
+      isUncertain: true,
+      reason: `Innehåller ${uncertainMatch.name}${uncertainMatch.description ? ` (${uncertainMatch.description})` : ''}`
+    };
+  }
+  
+  // Fallback till den enklare kontrollen för kända veganska/icke-veganska ingredienser
+  if (knownVeganIngredients.some(veganIngredient => 
+    normalizedName.includes(veganIngredient.toLowerCase()))) {
+    return { isVegan: true, isUncertain: false };
+  }
+  
+  if (knownNonVeganIngredients.some(nonVeganIngredient => 
+    normalizedName.includes(nonVeganIngredient.toLowerCase()))) {
+    return { 
+      isVegan: false, 
+      isUncertain: false,
+      reason: `Innehåller animalisk ingrediens (${normalizedName})`
+    };
+  }
+  
+  // Okänd status
+  return { isVegan: null, isUncertain: false };
+}
+
+/**
  * Determine if an ingredient name is likely vegan based on known lists
  * @param ingredientName The ingredient name to check
  * @returns {boolean|null} true if known vegan, false if known non-vegan, null if unknown
  */
 export function isIngredientVegan(ingredientName: string): boolean | null {
-  const normalizedName = ingredientName.toLowerCase().trim();
-  
-  // Check against known vegan ingredients
-  if (knownVeganIngredients.some(veganIngredient => 
-    normalizedName.includes(veganIngredient.toLowerCase()))) {
-    return true;
-  }
-  
-  // Check against known non-vegan ingredients
-  if (knownNonVeganIngredients.some(nonVeganIngredient => 
-    normalizedName.includes(nonVeganIngredient.toLowerCase()))) {
-    return false;
-  }
-  
-  // Unknown status
-  return null;
+  const { isVegan } = checkIngredientStatus(ingredientName);
+  return isVegan;
 }
 
 /**

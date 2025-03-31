@@ -218,28 +218,20 @@ router.post('/analyze-video', (async (req: Request, res: Response) => {
     // Transform the result to match the expected frontend structure
     const transformedResult = {
       isVegan: result.isVegan,
+      isUncertain: result.isUncertain || false,
       confidence: result.confidence,
       ingredientList: result.ingredients.map(ingredient => ingredient.name),
       watchedIngredients: result.ingredients
         .filter(ingredient => !ingredient.isVegan)
         .map(ingredient => ({
           name: ingredient.name,
-          reason: 'non-vegan',
-          description: `Ingrediensen "${ingredient.name}" är inte vegansk.`
+          reason: ingredient.isUncertain ? 'uncertain' : 'non-vegan',
+          description: ingredient.isUncertain 
+            ? `Ingrediensen "${ingredient.name}" kan vara vegansk eller icke-vegansk.`
+            : `Ingrediensen "${ingredient.name}" är inte vegansk.`
         })),
-      reasoning: result.reasoning || '',
-      detectedLanguage: result.detectedLanguages && result.detectedLanguages.length > 0 
-        ? result.detectedLanguages[0] 
-        : preferredLanguage || 'sv',
-      // Include original names for multilingual support
-      originalNames: result.ingredients
-        .filter(ingredient => ingredient.originalName)
-        .reduce((acc, ingredient) => {
-          if (ingredient.originalName) {
-            acc[ingredient.name] = ingredient.originalName;
-          }
-          return acc;
-        }, {} as Record<string, string>)
+      uncertainReasons: result.uncertainReasons || [],
+      reasoning: result.reasoning || ''
     };
     
     // Remove the requestId from the deduplication cache after successful processing

@@ -62,10 +62,11 @@ export function logVideoAnalysisResponse(details: {
   processingTimeSec: number;
   ingredientCount: number;
   isVegan: boolean;
+  isUncertain?: boolean;
   confidenceScore: number;
-  detectedLanguages?: string[];
   statusCode: number;
   errorMessage?: string;
+  uncertainIngredientsCount?: number;
 }) {
   const logLevel = details.errorMessage ? 'error' : 'info';
   const operation = details.errorMessage ? 'response:error' : 'response:success';
@@ -77,8 +78,9 @@ export function logVideoAnalysisResponse(details: {
     processingTimeSec: details.processingTimeSec,
     ingredientCount: details.ingredientCount,
     isVegan: details.isVegan,
+    isUncertain: details.isUncertain || false,
     confidenceScore: details.confidenceScore,
-    detectedLanguages: details.detectedLanguages || [],
+    uncertainIngredientsCount: details.uncertainIngredientsCount || 0,
     statusCode: details.statusCode,
     timestamp: new Date().toISOString(),
     errorMessage: details.errorMessage
@@ -93,15 +95,19 @@ export function logIngredientCorrection(details: {
   ingredient: string;
   originalStatus: boolean;
   correctedStatus: boolean;
+  isUncertain?: boolean;
   reason: string;
   confidence: number;
 }) {
-  logger.info('Ingredient classification corrected', {
+  const operation = details.isUncertain ? 'ingredientUncertain' : 'ingredientCorrection';
+  
+  logger.info(`Ingredient ${details.isUncertain ? 'marked as uncertain' : 'classification corrected'}`, {
     service: 'videoAnalysis',
-    operation: 'ingredientCorrection',
+    operation,
     ingredient: details.ingredient,
     originalStatus: details.originalStatus,
     correctedStatus: details.correctedStatus,
+    isUncertain: details.isUncertain || false,
     reason: details.reason,
     confidence: details.confidence,
     timestamp: new Date().toISOString()
