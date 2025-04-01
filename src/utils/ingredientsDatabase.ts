@@ -75,17 +75,19 @@ export function loadNonVeganIngredients(): IngredientData[] {
     const ingredients: IngredientData[] = [];
     
     for (const row of rows) {
-      const cleanRow = row.replace(/^"|"$/g, '').replace(/","/g, '","');
-      const [name, eNumber, description] = cleanRow.split(',').map(field => 
-        field?.replace(/^"|"$/g, '') || ''
-      );
-      
-      if (name) {
-        ingredients.push({ 
-          name: name.trim(), 
-          eNumber: eNumber?.trim(), 
-          description: description?.trim() 
-        });
+      const fields = row.split(','); // Dela direkt
+      if (fields.length >= 1) { // Behöver minst ett namn-fält
+          const name = fields[0]?.replace(/^"|"$/g, '').trim() || '';
+          const eNumber = fields[1]?.replace(/^"|"$/g, '').trim() || ''; // Hantera fält 1 (kan vara tomt)
+          const description = fields[2]?.replace(/^"|"$/g, '').trim() || ''; // Hantera fält 2 (kan vara tomt)
+
+          if (name) {
+              ingredients.push({ name, eNumber, description });
+          } else {
+               logger.warn(`Skipping row with empty name in non-vegan.csv: ${row}`); 
+          }
+      } else {
+          logger.warn(`Skipping invalid row in non-vegan.csv: ${row}`); 
       }
     }
     
@@ -111,21 +113,34 @@ export function loadUncertainIngredients(): IngredientData[] {
     const filePath = path.join(process.cwd(), 'src', 'data', 'uncertain.csv');
     const content = fs.readFileSync(filePath, 'utf8');
     
-    const rows = content.split('\n').filter(row => row.trim() && !row.startsWith('"name,e_number'));
+    // Split into lines and skip the header row (first line)
+    const rows = content.split('\\n').slice(1).filter(row => row.trim()); 
     const ingredients: IngredientData[] = [];
     
-    for (const row of rows) {
-      const cleanRow = row.replace(/^"|"$/g, '').replace(/","/g, '","');
-      const [name, eNumber, description] = cleanRow.split(',').map(field => 
-        field?.replace(/^"|"$/g, '') || ''
-      );
-      
-      if (name) {
-        ingredients.push({ 
-          name: name.trim(), 
-          eNumber: eNumber?.trim(), 
-          description: description?.trim() 
-        });
+    for (let i = 0; i < rows.length; i++) { // Use index for logging line number
+      const row = rows[i];
+      const fields = row.split(','); // Split by comma
+
+      // Expect exactly 3 fields after splitting
+      if (fields.length === 3) { 
+          // Remove surrounding quotes and trim whitespace from each field
+          const name = fields[0].replace(/^\"|\"$/g, '').trim();
+          const eNumber = fields[1].replace(/^\"|\"$/g, '').trim(); 
+          const description = fields[2].replace(/^\"|\"$/g, '').trim();
+
+          if (name) { // Ensure name is not empty
+              ingredients.push({ 
+                  name, 
+                  eNumber: eNumber || undefined, // Store as undefined if empty
+                  description: description || undefined // Store as undefined if empty
+              });
+          } else {
+               // Log warning for rows with empty name field (add 2 to index: 1 for 0-based, 1 for skipped header)
+               logger.warn(`Skipping row with empty name in uncertain.csv (line ${i + 2}): ${row}`); 
+          }
+      } else {
+          // Log warning for rows that don't have exactly 3 fields (add 2 to index)
+          logger.warn(`Skipping invalid row in uncertain.csv (line ${i + 2}) - expected 3 fields, got ${fields.length}: ${row}`); 
       }
     }
     
@@ -133,7 +148,9 @@ export function loadUncertainIngredients(): IngredientData[] {
     logger.info(`Loaded ${ingredients.length} uncertain ingredients from database`);
     return ingredients;
   } catch (error) {
-    logger.error('Failed to load uncertain ingredients database', { error });
+    // Log detailed error, including the type of error if possible
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error(`Failed to load uncertain ingredients database: ${errorMessage}`, { error });
     return [];
   }
 }
@@ -155,17 +172,19 @@ export function loadVeganIngredients(): IngredientData[] {
     const ingredients: IngredientData[] = [];
     
     for (const row of rows) {
-      const cleanRow = row.replace(/^"|"$/g, '').replace(/","/g, '","');
-      const [name, eNumber, description] = cleanRow.split(',').map(field => 
-        field?.replace(/^"|"$/g, '') || ''
-      );
-      
-      if (name) {
-        ingredients.push({ 
-          name: name.trim(), 
-          eNumber: eNumber?.trim(), 
-          description: description?.trim() 
-        });
+      const fields = row.split(','); // Dela direkt
+      if (fields.length >= 1) { // Behöver minst ett namn-fält
+          const name = fields[0]?.replace(/^"|"$/g, '').trim() || '';
+          const eNumber = fields[1]?.replace(/^"|"$/g, '').trim() || ''; // Hantera fält 1 (kan vara tomt)
+          const description = fields[2]?.replace(/^"|"$/g, '').trim() || ''; // Hantera fält 2 (kan vara tomt)
+
+          if (name) {
+              ingredients.push({ name, eNumber, description });
+          } else {
+               logger.warn(`Skipping row with empty name in vegan - vegan.csv: ${row}`); 
+          }
+      } else {
+          logger.warn(`Skipping invalid row in vegan - vegan.csv: ${row}`); 
       }
     }
     

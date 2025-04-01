@@ -230,527 +230,330 @@ Om du inte kan identifiera några ingredienser, svara med:
    * @returns Structured analysis result
    */
   private parseAnalysisResult(result: string): VideoAnalysisResult {
+    let parsedResult: any;
+    let rawJsonResponse: string | null = null;
+
     try {
-      // Attempt to parse JSON from the result
-      // First, find a JSON block if it exists
-      const jsonMatch = result.match(/```json\s*([\s\S]*?)\s*```/) || 
-                        result.match(/\{[\s\S]*\}/);
-      
-      let parsedResult: any;
-      
-      if (jsonMatch) {
-        // Extract the JSON content from the match
-        const jsonContent = jsonMatch[1] || jsonMatch[0];
-        // Sanera JSON-strängen - ta bort oönskade tecken som kan orsaka parsningsfel
-        const sanitizedJson = jsonContent
-          .replace(/\n/g, ' ')
-          .replace(/\r/g, ' ')
-          .replace(/\t/g, ' ')
-          .replace(/\\/g, '\\\\')
-          .replace(/"/g, '\\"')
-          .replace(/true\/false/g, 'true') // Ersätt instruktionstext (om den finns)
-          .replace(/0\.0-1\.0/g, '0.5');   // Ersätt instruktionstext (om den finns)
-        
+      // 1. Prioritize extracting JSON from ```json blocks
+      const jsonBlockMatch = result.match(/```json\\s*([\\s\\S]*?)\\s*```/);
+      if (jsonBlockMatch && jsonBlockMatch[1]) {
+        rawJsonResponse = jsonBlockMatch[1].trim();
         try {
-          parsedResult = JSON.parse(sanitizedJson);
-          logger.debug('Parsed JSON result', { 
-            resultKeys: Object.keys(parsedResult)
+          parsedResult = JSON.parse(rawJsonResponse);
+          logger.debug('Successfully parsed JSON from ```json block');
+        } catch (jsonError: any) {
+          logger.warn('Failed to parse JSON from ```json block, attempting direct parse', {
+            error: jsonError.message,
+            rawJson: rawJsonResponse // Log the raw JSON that failed
           });
-        } catch (jsonError) {
-          // Om JSON-parsning misslyckas, försök med en mindre strikt approach
-          logger.warn('JSON parsing failed, trying to extract with regex', { jsonError });
-          parsedResult = this.extractWithRegex(jsonContent);
+          parsedResult = null; // Reset for next attempt
         }
-      } else {
-        // If no JSON found, try to extract information from text
-        logger.warn('No JSON found in AI response, using fallback parser');
-        parsedResult = {
-          ingredients: this.extractIngredientsFromText(result),
-          isVegan: result.toLowerCase().includes('vegan: true'),
-          confidence: 0.5 // Default confidence
-        };
+      }
+
+      // 2. If no valid JSON from block, try parsing the first/largest standalone object
+      if (!parsedResult) {
+        const standaloneJsonMatch = result.match(/\\{[\\s\\S]*\\}/);
+        if (standaloneJsonMatch && standaloneJsonMatch[0]) {
+          rawJsonResponse = standaloneJsonMatch[0].trim();
+          try {
+            parsedResult = JSON.parse(rawJsonResponse);
+            logger.debug('Successfully parsed JSON from standalone object');
+          } catch (jsonError: any) {
+            logger.warn('Failed to parse JSON from standalone object', {
+              error: jsonError.message,
+              rawJson: rawJsonResponse // Log the raw JSON that failed
+            });
+            parsedResult = null;
+          }
+        }
+      }
+
+      // 3. If direct JSON parsing failed, use regex as a last resort (and log a warning)
+      if (!parsedResult) {
+        logger.warn('Direct JSON parsing failed for AI response. Falling back to regex extraction.', {
+            fullResponse: result // Log the entire response when falling back
+        });
+        // Use the regex extraction method as fallback
+        parsedResult = this.extractIngredientsWithRegex(result);
+      }
+
+      // Basic validation of the parsed structure
+      if (!parsedResult || !Array.isArray(parsedResult.ingredients)) {
+          // If even regex failed to produce a basic structure, throw error
+         throw new Error('Invalid or incomplete analysis result structure after parsing attempts');
       }
       
-      // Validate the structure
-      if (!parsedResult.ingredients || !Array.isArray(parsedResult.ingredients)) {
-        logger.warn('No ingredients found or invalid structure, creating empty array');
-        parsedResult.ingredients = [];
-      }
-      
-      // Ensure isVegan is a boolean
+      // Ensure confidence and isVegan exist at the top level (even if regex was used)
       if (typeof parsedResult.isVegan !== 'boolean') {
-        if (typeof parsedResult.isVegan === 'string') {
-          parsedResult.isVegan = parsedResult.isVegan.toLowerCase() === 'true';
-        } else {
-          // Om inga ingredienser eller om vi inte har ett isVegan-värde, 
-          // behandla som icke-vegansk för säkerhets skull
-          parsedResult.isVegan = parsedResult.ingredients.length > 0 ? false : false;
-        }
+          parsedResult.isVegan = false; // Default to false if missing
       }
-      
-      // Ensure confidence is a number between 0 and 1
-      if (typeof parsedResult.confidence !== 'number' || parsedResult.confidence < 0 || parsedResult.confidence > 1) {
-        parsedResult.confidence = parsedResult.ingredients.length > 0 ? 0.5 : 0.0;
+       if (typeof parsedResult.confidence !== 'number') {
+          parsedResult.confidence = 0.5; // Default confidence if missing
       }
-      
-      // För loggning, spara detekterade språk om de finns
-      const detectedLanguages = parsedResult.detectedLanguages;
-      if (detectedLanguages && Array.isArray(detectedLanguages) && detectedLanguages.length > 0) {
-        logger.debug('Languages detected by AI', { detectedLanguages });
-      }
-      
-      // Validate and correct ingredient classifications using our database
-      const { hasNonVegan, hasUncertain, uncertainReasons } = this.validateIngredients(parsedResult.ingredients);
-      
-      // Process and deduplicate ingredients
-      this.processMultilingualIngredients(parsedResult.ingredients, detectedLanguages);
-      
-      // Om vi fortfarande inte har några ingredienser, returnera ett tomt resultat
-      if (parsedResult.ingredients.length === 0) {
-        logger.warn('No ingredients found after processing');
-        return {
-          ingredients: [],
-          isVegan: false,
-          isUncertain: false,
-          confidence: 0.0,
-          reasoning: 'Inga ingredienser kunde identifieras'
-        };
-      }
-      
-      // Additional logging for debugging - Ändra till debug och logga bara antal + status
-      logger.debug('Parsed ingredients data summary', { 
-        ingredientCount: parsedResult.ingredients.length,
-        finalIsVegan: parsedResult.isVegan, // Använd den omberäknade isVegan från senare i koden
-        finalIsUncertain: parsedResult.isUncertain // Använd den omberäknade isUncertain från senare i koden
+
+      // Enhance with database validation and uncertainty checks
+      const enhancedResult = this.enhanceAnalysisResult(parsedResult);
+
+      logger.info('Successfully parsed and enhanced AI analysis result', {
+        ingredientCount: enhancedResult.ingredients.length,
+        isVegan: enhancedResult.isVegan,
+        isUncertain: enhancedResult.isUncertain || false
       });
-      
-      // Re-evaluate overall vegan status based on corrected ingredients
-      const nonVeganIngredients = parsedResult.ingredients.filter((i: any) => !i.isVegan);
-      
-      // Bestäm den slutliga statusen för produkten
-      let isVegan = false;
-      let isUncertain = false;
-      
-      if (hasNonVegan) {
-        isVegan = false;
-        isUncertain = false;
-      } else if (hasUncertain) {
-        isVegan = false;
-        isUncertain = true;
-      } else if (nonVeganIngredients.length === 0) { // Använd den filtrerade listan här
-        isVegan = true;
-        isUncertain = false;
-      } else {
-        // Denna else-sats bör troligen inte kunna nås om hasNonVegan är korrekt satt
-        // men behåller för säkerhets skull
-        isVegan = false;
-        isUncertain = false;
-      }
-      
-      // Ta bort detectedLanguages om det finns kvar i resultatet
-      delete parsedResult.detectedLanguages;
-      
-      // Skapa reasoning-text baserat på vegan-status och osäkerhet
-      let reasoning = '';
-      if (isVegan) {
-        reasoning = 'Alla ingredienser är veganska';
-      } else if (isUncertain) {
-        reasoning = 'Osäker vegan-status: ' + uncertainReasons.join('; ');
-      } else if (nonVeganIngredients.length > 0) {
-        const nonVeganNames = nonVeganIngredients.map((i: IngredientAnalysisResult) => i.name).join(', ');
-        reasoning = `Innehåller icke-veganska ingredienser: ${nonVeganNames}`;
-      }
-      
-      return {
-        ...parsedResult,
-        isVegan,
-        isUncertain,
-        uncertainReasons: uncertainReasons.length > 0 ? uncertainReasons : undefined,
-        reasoning: reasoning || parsedResult.reasoning
-      } as VideoAnalysisResult;
-    } catch (error) {
-      logger.error('Error parsing analysis result', { error });
-      // Returnera ett tomt men giltigt resultat vid fel
+
+      return enhancedResult;
+
+    } catch (error: any) {
+      logger.error('Fatal error processing AI analysis result, returning empty result.', {
+          error: error.message,
+          originalResponse: result // Log the original response on fatal error
+      });
+      // Return a default empty result on fatal processing error
       return {
         ingredients: [],
         isVegan: false,
         isUncertain: false,
-        confidence: 0.0,
-        reasoning: 'Ett fel uppstod vid analys av ingredienser'
+        confidence: 0,
+        reasoning: 'Error processing analysis result',
+        uncertainReasons: []
       };
     }
   }
   
   /**
-   * Försök extrahera JSON med regex när vanlig parsning misslyckas
+   * Attempts to extract ingredient data using Regex as a fallback when JSON parsing fails.
+   * Based on the original `extractWithRegex` logic.
+   * @param text The raw AI response text.
+   * @returns A preliminary parsed result object, potentially incomplete.
    */
-  private extractWithRegex(text: string): any {
+  private extractIngredientsWithRegex(text: string): any {
     const result: any = {
       ingredients: [],
-      isVegan: false,
-      confidence: 0.5
+      isVegan: false, // Default
+      confidence: 0.5 // Default
     };
-    
-    // Försök hitta ingredienslistan
+
+    // Try finding the ingredients array structure
     const ingredientsMatch = text.match(/"ingredients"\s*:\s*\[([\s\S]*?)\]/);
     if (ingredientsMatch && ingredientsMatch[1]) {
-      // Hitta alla individuella ingrediensobjekt
-      const ingredientMatches = ingredientsMatch[1].match(/{[\s\S]*?}/g);
-      if (ingredientMatches) {
-        ingredientMatches.forEach(ingredientText => {
-          try {
-            // Extrahera namn
-            const nameMatch = ingredientText.match(/"name"\s*:\s*"([^"]*)"/);
-            // Extrahera isVegan
-            const isVeganMatch = ingredientText.match(/"isVegan"\s*:\s*(true|false)/);
-            // Extrahera confidence
-            const confidenceMatch = ingredientText.match(/"confidence"\s*:\s*([0-9.]*)/);
-            
-            if (nameMatch && nameMatch[1]) {
-              const ingredient = {
-                name: nameMatch[1],
-                isVegan: isVeganMatch && isVeganMatch[1] === 'true' ? true : false,
-                confidence: confidenceMatch && !isNaN(parseFloat(confidenceMatch[1])) 
-                  ? parseFloat(confidenceMatch[1]) 
-                  : 0.5
-              };
-              result.ingredients.push(ingredient);
-            }
-          } catch (e) {
-            logger.warn('Failed to parse ingredient with regex', { ingredientText, error: e });
+      const ingredientObjectsText = ingredientsMatch[1];
+      // Match individual { ... } objects within the array text
+      const individualIngredientMatches = ingredientObjectsText.match(/\{[\s\S]*?\}/g);
+
+      if (individualIngredientMatches) {
+        individualIngredientMatches.forEach(ingredientText => {
+          const nameMatch = ingredientText.match(/"name"\s*:\s*"([^"]*)"/);
+          const isVeganMatch = ingredientText.match(/"isVegan"\s*:\s*(true|false)/);
+          const confidenceMatch = ingredientText.match(/"confidence"\s*:\s*([0-9.]+)/);
+
+          if (nameMatch && nameMatch[1]) {
+            result.ingredients.push({
+              name: nameMatch[1],
+              isVegan: isVeganMatch ? isVeganMatch[1] === 'true' : false, // Default false if not found
+              confidence: confidenceMatch ? parseFloat(confidenceMatch[1]) : 0.5 // Default 0.5
+            });
           }
         });
       }
+    } else {
+        // Fallback: If no "ingredients": [...] structure found, try extracting from general text
+        // (Using simplified logic from original extractIngredientsFromText)
+        const items = text.split(/[,.;:\n()\/]+/);
+        for (const item of items) {
+            const trimmedItem = item.trim();
+             if (trimmedItem.length > 2 && !/^\d+$/.test(trimmedItem) && !trimmedItem.toLowerCase().includes('ingredient')) {
+                 const isVeganGuess = !(trimmedItem.toLowerCase().includes('mjölk') || trimmedItem.toLowerCase().includes('ägg')); // Very basic guess
+                 result.ingredients.push({
+                    name: trimmedItem,
+                    isVegan: isVeganGuess,
+                    confidence: 0.3 // Lower confidence for this method
+                 });
+                 if (result.ingredients.length >= 20) break; // Limit
+             }
+        }
     }
-    
-    // Extrahera isVegan för hela produkten
-    const isVeganMatch = text.match(/"isVegan"\s*:\s*(true|false)/);
-    if (isVeganMatch && isVeganMatch[1]) {
-      result.isVegan = isVeganMatch[1] === 'true';
+
+    // Try extracting top-level isVegan and confidence
+    const topLevelIsVeganMatch = text.match(/"isVegan"\s*:\s*(true|false)/);
+    if (topLevelIsVeganMatch) {
+      result.isVegan = topLevelIsVeganMatch[1] === 'true';
     }
-    
-    // Extrahera confidence för hela produkten
-    const confidenceMatch = text.match(/"confidence"\s*:\s*([0-9.]*)/);
-    if (confidenceMatch && !isNaN(parseFloat(confidenceMatch[1]))) {
-      result.confidence = parseFloat(confidenceMatch[1]);
+    const topLevelConfidenceMatch = text.match(/"confidence"\s*:\s*([0-9.]+)/);
+     if (topLevelConfidenceMatch && !isNaN(parseFloat(topLevelConfidenceMatch[1]))) {
+      result.confidence = parseFloat(topLevelConfidenceMatch[1]);
     }
-    
-    return result;
+
+    logger.debug('Extracted data using regex fallback', {
+        ingredientCount: result.ingredients.length,
+        foundIsVegan: result.isVegan,
+        foundConfidence: result.confidence
+    });
+    return result; // Return whatever was found, even if incomplete
   }
   
   /**
-   * Validate ingredient classifications against known databases
-   * @param ingredients List of ingredients with AI classification
-   * @returns Flags indicating if non-vegan or uncertain ingredients were found
+   * Enhances the parsed AI result by validating against the database,
+   * determining final vegan/uncertain status, and generating reasoning.
+   * Incorporates logic from original `validateIngredients` and final processing steps.
+   * @param parsedResult The preliminary result object (from JSON or regex).
+   * @returns The final, enhanced VideoAnalysisResult.
    */
-  private validateIngredients(ingredients: IngredientAnalysisResult[]): {
-    hasNonVegan: boolean;
-    hasUncertain: boolean;
-    uncertainReasons: string[];
-  } {
-    if (!ingredients || !Array.isArray(ingredients)) {
-      return { hasNonVegan: false, hasUncertain: false, uncertainReasons: [] };
-    }
-    
-    logger.debug('Validating ingredient classifications', { 
-      ingredientCount: ingredients.length 
-    });
-    
+  private enhanceAnalysisResult(parsedResult: any): VideoAnalysisResult {
+    // 1. Validate ingredients against database and update status/confidence
     let hasNonVegan = false;
     let hasUncertain = false;
-    const uncertainReasons: string[] = [];
-    
-    for (const ingredient of ingredients) {
-      if (!ingredient.name) continue;
-      
-      // Store original values for logging
-      const originalIsVegan = ingredient.isVegan;
-      const originalIsUncertain = ingredient.isUncertain;
-      
-      // Check against our database (non-vegan -> uncertain -> vegan)
-      const dbStatus = checkIngredientStatus(ingredient.name);
-      
-      // Uppdatera ingrediensens status baserat på databasen
-      if (dbStatus.isVegan === false) {
-        // Definitivt icke-vegansk enligt databas
-        if (ingredient.isVegan !== false || ingredient.isUncertain === true) {
-          logIngredientCorrection({
-            ingredient: ingredient.name,
-            originalStatus: originalIsVegan,
-            correctedStatus: false,
-            reason: `Database match (Non-Vegan): ${dbStatus.reason}`,
-            confidence: 0.99
-          });
-        }
-        ingredient.isVegan = false;
-        ingredient.isUncertain = false; 
-        ingredient.confidence = 0.99;
-        hasNonVegan = true;
-        
-      } else if (dbStatus.isUncertain === true) {
-        // Osäker enligt databas
-        if (ingredient.isUncertain !== true) {
-          logIngredientCorrection({
-            ingredient: ingredient.name,
-            originalStatus: originalIsVegan,
-            correctedStatus: false, // Treat uncertain as potentially non-vegan
-            isUncertain: true,
-            reason: `Database match (Uncertain): ${dbStatus.reason}`,
-            confidence: 0.5 // Lower confidence for uncertain
-          });
-        }
-        ingredient.isVegan = false; // Default uncertain to non-vegan for safety
-        ingredient.isUncertain = true;
-        ingredient.confidence = 0.5;
-        hasUncertain = true;
-        if (dbStatus.reason && !uncertainReasons.includes(dbStatus.reason)) {
-          uncertainReasons.push(dbStatus.reason);
-        }
+    const uncertainReasonsAccumulator: string[] = []; // Renamed to avoid conflict
 
-      } else if (dbStatus.isVegan === true) {
-        // Definitivt vegansk enligt databas
-        if (ingredient.isVegan !== true || ingredient.isUncertain === true) {
-          logIngredientCorrection({
-            ingredient: ingredient.name,
-            originalStatus: originalIsVegan,
-            originalIsUncertain: originalIsUncertain, // Log if it was uncertain before
-            correctedStatus: true,
-            reason: `Database match (Vegan): ${dbStatus.reason}`,
-            confidence: 0.98
-          });
-        }
-        ingredient.isVegan = true;
-        ingredient.isUncertain = false;
-        ingredient.confidence = 0.98;
-        // Notera: Sätter inte hasNonVegan eller hasUncertain
+    if (Array.isArray(parsedResult.ingredients)) {
+        for (const ingredient of parsedResult.ingredients) {
+            if (!ingredient || !ingredient.name) continue;
 
-      } 
-      // Om ingen match i databasen (dbStatus.isVegan === null och dbStatus.isUncertain === false),
-      // behåll AI:ns ursprungliga klassificering.
-      // Uppdatera hasNonVegan/hasUncertain baserat på AI:ns klassificering om ingen DB-match.
-      else {
-          if (ingredient.isVegan === false && !ingredient.isUncertain) {
-              hasNonVegan = true;
-          }
-          if (ingredient.isUncertain === true) {
-              hasUncertain = true;
-              // Om AI markerade som osäker men vi inte har anledning, lägg till generell anledning
-              const genericReason = `${ingredient.name} markerades som osäker av AI`;
-              if (!uncertainReasons.some(r => r.startsWith(ingredient.name))) {
-                  uncertainReasons.push(genericReason);
-              }
-          }
-      }
+            const originalIsVegan = ingredient.isVegan;
+            const originalIsUncertain = ingredient.isUncertain; // Keep track if AI marked uncertain
+
+            const dbStatus = checkIngredientStatus(ingredient.name);
+
+            if (dbStatus.isVegan === false) {
+                 // Definitivt icke-vegansk enligt databas
+                 if (ingredient.isVegan !== false || ingredient.isUncertain === true) {
+                    // Restore logging details
+                    logIngredientCorrection({
+                        ingredient: ingredient.name,
+                        originalStatus: originalIsVegan,
+                        originalIsUncertain: originalIsUncertain,
+                        correctedStatus: false,
+                        isUncertain: false, // Ensure false here
+                        reason: `Database match (Non-Vegan): ${dbStatus.reason}`,
+                        confidence: 0.99
+                     });
+                 }
+                 ingredient.isVegan = false;
+                 ingredient.isUncertain = false;
+                 ingredient.confidence = 0.99; // High confidence from DB
+                 hasNonVegan = true;
+            } else if (dbStatus.isUncertain === true) {
+                 // Osäker enligt databas
+                 if (ingredient.isUncertain !== true) {
+                     // Restore logging details
+                     logIngredientCorrection({
+                         ingredient: ingredient.name,
+                         originalStatus: originalIsVegan,
+                         // originalIsUncertain is implicitly false if we enter here
+                         correctedStatus: false, // Uncertain treated as non-vegan
+                         isUncertain: true,
+                         reason: `Database match (Uncertain): ${dbStatus.reason}`,
+                         confidence: 0.5
+                     });
+                 }
+                 ingredient.isVegan = false; // Treat uncertain as non-vegan for safety
+                 ingredient.isUncertain = true;
+                 ingredient.confidence = 0.5; // Lower confidence
+                 hasUncertain = true;
+                 if (dbStatus.reason && !uncertainReasonsAccumulator.includes(dbStatus.reason)) {
+                    uncertainReasonsAccumulator.push(dbStatus.reason);
+                 }
+            } else if (dbStatus.isVegan === true) {
+                 // Definitivt vegansk enligt databas
+                 if (ingredient.isVegan !== true || ingredient.isUncertain === true) {
+                    // Restore logging details
+                    logIngredientCorrection({
+                        ingredient: ingredient.name,
+                        originalStatus: originalIsVegan,
+                        originalIsUncertain: originalIsUncertain,
+                        correctedStatus: true,
+                        isUncertain: false,
+                        reason: `Database match (Vegan): ${dbStatus.reason}`,
+                        confidence: 0.98
+                    });
+                 }
+                 ingredient.isVegan = true;
+                 ingredient.isUncertain = false;
+                 ingredient.confidence = 0.98; // High confidence
+            } else {
+                // No DB match, trust AI but update overall flags
+                 if (ingredient.isVegan === false && !ingredient.isUncertain) {
+                    hasNonVegan = true;
+                 }
+                 if (ingredient.isUncertain === true) { // If AI marked as uncertain
+                    hasUncertain = true;
+                     const genericReason = `${ingredient.name} markerades som osäker av AI`;
+                     if (!uncertainReasonsAccumulator.some(r => r.startsWith(ingredient.name))) {
+                        uncertainReasonsAccumulator.push(genericReason);
+                     }
+                 }
+            }
+        }
+    } else {
+        // Ensure ingredients is an array even if regex failed badly
+        parsedResult.ingredients = [];
     }
     
-    return { hasNonVegan, hasUncertain, uncertainReasons };
-  }
-  
-  /**
-   * Process ingredients to ensure they are in Swedish and deduplicated
-   * @param ingredients List of ingredients to process
-   */
-  private processMultilingualIngredients(ingredients: any[], detectedLanguages?: string[]): void {
-    if (!ingredients || !Array.isArray(ingredients) || ingredients.length === 0) return;
-    
-    // Set to track processed ingredient names (case-insensitive)
+    // 2. Process Multilingual / Deduplicate (Simplified based on original code)
     const processedNames = new Set<string>();
-    const uniqueIngredients: any[] = [];
-    
-    // För debugging, logga originalspråken om de identifierats
-    if (detectedLanguages && detectedLanguages.length > 0) {
-      logger.debug('Detected languages on packaging (for internal logging only)', {
-        detectedLanguages
-      });
-    }
-    
-    // Process each ingredient
-    for (const ingredient of ingredients) {
-      if (!ingredient.name) continue;
-      
-      // Normalisera namn för avduplikering
-      const normalizedName = ingredient.name.toLowerCase().trim();
-      
-      // Om vi redan har denna ingrediens, hoppa över den (efter normalisering)
-      if (processedNames.has(normalizedName)) {
-        continue;
-      }
-      
-      // Markera som bearbetad
-      processedNames.add(normalizedName);
-      
-      // Ta bort eventuella originalName och detectedLanguage fält
-      // eftersom vi inte längre skickar den informationen till frontend
-      const processedIngredient = {
-        name: ingredient.name,
-        isVegan: ingredient.isVegan,
-        confidence: ingredient.confidence
-      };
-      
-      // Lägg till i den unika listan
-      uniqueIngredients.push(processedIngredient);
-    }
-    
-    // Ersätt originallistan med deduplikerade ingredienser
-    ingredients.length = 0;
-    ingredients.push(...uniqueIngredients);
-    
-    logger.debug('Processed ingredients', {
-      finalCount: uniqueIngredients.length
-    });
-  }
-  
-  /**
-   * Extract ingredients from text when JSON parsing fails
-   */
-  private extractIngredientsFromText(text: string): IngredientAnalysisResult[] {
-    const ingredientsList: IngredientAnalysisResult[] = [];
-    
-    // Look for ingredient lists in the text
-    const lines = text.split('\n');
-    let inIngredientList = false;
-    
-    // Först, försök hitta en struktur som liknar en ingredienslista
-    for (const line of lines) {
-      const trimmedLine = line.trim();
-      
-      // Check if this line could be starting an ingredient list
-      if (trimmedLine.toLowerCase().includes('ingredient') && 
-          (trimmedLine.includes(':') || trimmedLine.endsWith(':'))) {
-        inIngredientList = true;
-        continue;
-      }
-      
-      // If we're in an ingredient list, parse items
-      if (inIngredientList && trimmedLine) {
-        // Skip empty lines and list markers
-        if (trimmedLine === '-' || trimmedLine === '*' || !trimmedLine) continue;
-        
-        // Check if we've reached the end of the list
-        if (trimmedLine.toLowerCase().startsWith('vegan:') || 
-            trimmedLine.toLowerCase().startsWith('confidence:')) {
-          inIngredientList = false;
-          continue;
-        }
-        
-        // Parse the ingredient line
-        let ingredientName = trimmedLine;
-        
-        // Remove list markers if they exist
-        ingredientName = ingredientName.replace(/^[-*•]\s*/, '');
-        
-        // Look for vegan indicators in the line
-        let isVegan = true; // Default to vegan
-        
-        // Kolla efter icke-veganska indikatorer
-        if (ingredientName.toLowerCase().includes('non-vegan') || 
-            ingredientName.toLowerCase().includes('animal') ||
-            ingredientName.toLowerCase().includes('mjölk') ||
-            ingredientName.toLowerCase().includes('ägg') ||
-            ingredientName.toLowerCase().includes('ost') ||
-            ingredientName.toLowerCase().includes('smör') ||
-            ingredientName.toLowerCase().includes('honung') ||
-            ingredientName.toLowerCase().includes('gelatin')) {
-          isVegan = false;
-        }
-        
-        // Om namnet innehåller information om vegansk status, rensa namnet
-        ingredientName = ingredientName
-          .replace(/\(vegansk\)/i, '')
-          .replace(/\(icke-vegansk\)/i, '')
-          .replace(/\(non-vegan\)/i, '')
-          .replace(/\(vegan\)/i, '')
-          .trim();
-        
-        // Försök identifiera ett konfidenstal om det finns
-        let confidence = 0.7; // Default
-        const confidenceMatch = ingredientName.match(/\(konfidensgrad:?\s*([0-9.]+)\)/i);
-        if (confidenceMatch && confidenceMatch[1]) {
-          const parsedConfidence = parseFloat(confidenceMatch[1]);
-          if (!isNaN(parsedConfidence)) {
-            confidence = parsedConfidence <= 1 ? parsedConfidence : parsedConfidence / 100;
-            // Ta bort konfidenstexten från namnet
-            ingredientName = ingredientName.replace(/\(konfidensgrad:?\s*[0-9.]+\)/i, '').trim();
-          }
-        }
-        
-        // Lägg till ingrediensen om vi har ett meningsfullt namn
-        if (ingredientName && ingredientName.length > 1) {
-          ingredientsList.push({
-            name: ingredientName,
-            isVegan: isVegan,
-            confidence: confidence
-          });
-        }
-      }
-    }
-    
-    // Fallback: Om vi inte hittade någon ingredienslista, försök identifiera individuella ingredienser
-    if (ingredientsList.length === 0) {
-      // Vanliga inledare för ingredienssektioner
-      const ingredientKeywords = [
-        'ingredienser:', 'ingredients:', 'innehåll:', 'innehåller:',
-        'ingredienser är:', 'ingredients are:'
-      ];
-      
-      // Hitta en potentiell ingredienssektion
-      let ingredientSection = '';
-      for (const keyword of ingredientKeywords) {
-        const keywordIndex = text.toLowerCase().indexOf(keyword);
-        if (keywordIndex !== -1) {
-          ingredientSection = text.substring(keywordIndex + keyword.length);
-          break;
-        }
-      }
-      
-      if (ingredientSection) {
-        // Dela upp texten och hitta potentiella ingredienser
-        const items = ingredientSection.split(/[,.;:\n()\/]+/);
-        for (const item of items) {
-          const trimmedItem = item.trim();
-          // Ignorera för korta strängar och siffror
-          if (trimmedItem.length > 2 && !/^\d+$/.test(trimmedItem)) {
-            // Kolla om denna ingrediens är vegansk baserat på vissa nyckelord
-            const isVegan = !(
-              trimmedItem.toLowerCase().includes('mjölk') ||
-              trimmedItem.toLowerCase().includes('ägg') ||
-              trimmedItem.toLowerCase().includes('ost') ||
-              trimmedItem.toLowerCase().includes('kött') ||
-              trimmedItem.toLowerCase().includes('fisk') ||
-              trimmedItem.toLowerCase().includes('honung') ||
-              trimmedItem.toLowerCase().includes('gelatin')
-            );
-            
-            ingredientsList.push({
-              name: trimmedItem,
-              isVegan: isVegan,
-              confidence: 0.6 // Lägre konfidensgrad för denna fallback-metod
-            });
-            
-            // Begränsa till 20 ingredienser för att undvika att hitta för många falska positiva
-            if (ingredientsList.length >= 20) break;
-          }
-        }
-      }
-    }
-    
-    // Rensa och deduplicera för säkerhets skull
     const uniqueIngredients: IngredientAnalysisResult[] = [];
-    const seenNames = new Set<string>();
-    
-    for (const ingredient of ingredientsList) {
-      const normalizedName = ingredient.name.toLowerCase().trim();
-      if (normalizedName && !seenNames.has(normalizedName)) {
-        seenNames.add(normalizedName);
-        uniqueIngredients.push(ingredient);
-      }
+     if (Array.isArray(parsedResult.ingredients)) {
+        for (const ingredient of parsedResult.ingredients) {
+           if (ingredient && ingredient.name) {
+                const normalizedName = ingredient.name.toLowerCase().trim();
+                if (!processedNames.has(normalizedName)) {
+                    processedNames.add(normalizedName);
+                    // Ensure basic structure
+                    uniqueIngredients.push({
+                        name: ingredient.name,
+                        isVegan: typeof ingredient.isVegan === 'boolean' ? ingredient.isVegan : false,
+                        confidence: typeof ingredient.confidence === 'number' ? ingredient.confidence : 0.5,
+                        isUncertain: typeof ingredient.isUncertain === 'boolean' ? ingredient.isUncertain : false
+                    });
+                }
+            }
+        }
+     }
+     // Replace original list with unique list
+     parsedResult.ingredients = uniqueIngredients;
+
+
+    // 3. Determine final product status based on ingredient validation
+    let finalIsVegan = false;
+    let finalIsUncertain = false;
+
+    if (hasNonVegan) {
+      finalIsVegan = false;
+      finalIsUncertain = false;
+    } else if (hasUncertain) {
+      finalIsVegan = false; // Uncertain products are not considered vegan
+      finalIsUncertain = true;
+    } else {
+      // If no non-vegan and no uncertain found, it's vegan
+      finalIsVegan = true;
+      finalIsUncertain = false;
     }
-    
-    logger.debug('Extracted ingredients from text response', {
-      extractedCount: uniqueIngredients.length
-    });
-    
-    return uniqueIngredients;
+
+    // 4. Generate reasoning text
+    let finalReasoning = '';
+    if (finalIsVegan) {
+      finalReasoning = 'Alla identifierade ingredienser verkar vara veganska baserat på databas och AI-analys.';
+    } else if (finalIsUncertain) {
+      finalReasoning = 'Osäker vegansk status. Orsaker: ' + uncertainReasonsAccumulator.join('; ');
+    } else { // Must be non-vegan
+        const nonVeganNames = parsedResult.ingredients
+            .filter((i: IngredientAnalysisResult) => i.isVegan === false && i.isUncertain !== true)
+            .map((i: IngredientAnalysisResult) => i.name)
+            .join(', ');
+         if (nonVeganNames) {
+            finalReasoning = `Innehåller ingredienser som inte är veganska: ${nonVeganNames}.`;
+         } else {
+             finalReasoning = 'Produkten bedöms inte vara vegansk, men specifik icke-vegansk ingrediens kunde inte fastställas.';
+         }
+    }
+
+    // 5. Construct the final result object
+    return {
+      ingredients: parsedResult.ingredients, // The validated, unique list
+      isVegan: finalIsVegan,
+      isUncertain: finalIsUncertain,
+      confidence: parsedResult.confidence, // Use the top-level confidence from AI/regex
+      reasoning: finalReasoning,
+      uncertainReasons: uncertainReasonsAccumulator.length > 0 ? uncertainReasonsAccumulator : undefined
+    };
   }
   
   /**

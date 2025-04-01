@@ -220,14 +220,23 @@ router.post('/analyze-video', (async (req: Request, res: Response) => {
       confidence: result.confidence,
       ingredientList: result.ingredients.map(ingredient => ingredient.name),
       watchedIngredients: result.ingredients
-        .filter(ingredient => !ingredient.isVegan)
+        .filter(ingredient => !ingredient.isVegan || ingredient.isUncertain) // Inkludera alla ingredienser som antingen inte är veganska eller osäkra
         .map(ingredient => ({
           name: ingredient.name,
+          // Behåll 'reason' för bakåtkompatibilitet, men lägg också till 'status' för framtida användning
           reason: ingredient.isUncertain ? 'uncertain' : 'non-vegan',
+          status: ingredient.isUncertain ? 'uncertain' : 'non-vegan',
           description: ingredient.isUncertain 
             ? `Ingrediensen "${ingredient.name}" kan vara vegansk eller icke-vegansk.`
             : `Ingrediensen "${ingredient.name}" är inte vegansk.`
         })),
+      // Separata listor för osäkra och icke-veganska ingredienser
+      nonVeganIngredients: result.ingredients
+        .filter(ingredient => !ingredient.isVegan && !ingredient.isUncertain)
+        .map(ingredient => ingredient.name),
+      uncertainIngredients: result.ingredients
+        .filter(ingredient => ingredient.isUncertain)
+        .map(ingredient => ingredient.name),
       uncertainReasons: result.uncertainReasons || [],
       reasoning: result.reasoning || ''
     };
