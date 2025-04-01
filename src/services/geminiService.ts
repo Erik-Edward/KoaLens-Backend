@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold, GenerationConfig } from '@google/generative-ai';
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold, GenerationConfig, GenerateContentResult, FunctionDeclarationsTool } from '@google/generative-ai';
 import { AIProvider } from '../types/aiProvider';
 import config from '../config/ai-config';
 import { logger, logAIRequest, logAIResponse } from '../utils/logger';
@@ -184,9 +184,15 @@ export class GeminiService implements AIProvider {
    * @param prompt The text prompt to guide the video analysis
    * @param videoBase64 The base64-encoded video data
    * @param mimeType The MIME type of the video, default is video/mp4
-   * @returns Promise resolving to the generated content
+   * @param tools Optional tools (like function declarations) to provide to the model
+   * @returns Promise resolving to the full GenerateContentResult object
    */
-  async generateContentFromVideo(prompt: string, videoBase64: string, mimeType: string = 'video/mp4'): Promise<string> {
+  async generateContentFromVideo(
+    prompt: string, 
+    videoBase64: string, 
+    mimeType: string = 'video/mp4',
+    tools?: FunctionDeclarationsTool[]
+  ): Promise<GenerateContentResult> {
     return this.withRetry(async () => {
       const model = this.genAI.getGenerativeModel({ model: this.modelName });
       
@@ -203,33 +209,39 @@ export class GeminiService implements AIProvider {
         prompt, 
         mediaType: mimeType,
         mediaSizeBytes: videoBase64.length * 0.75, // Approximation of Base64 size
-        generationConfig 
+        generationConfig,
+        toolsProvided: !!tools
       });
       
       try {
-        // Use the simplified method for multimodal content recommended by Google
-        const result = await model.generateContent([
-          prompt, 
-          { 
-            inlineData: { 
-              data: videoBase64, 
-              mimeType: mimeType 
-            } 
-          }
-        ]);
-        
-        const response = result.response;
-        const text = response.text();
-        
-        // Log response for monitoring
-        logAIResponse('gemini', { 
-          responseText: text.substring(0, 100) + (text.length > 100 ? '...' : ''),
-          promptTokens: prompt.length / 4, // Estimate
-          mediaTokens: 'Video content', 
-          completionTokens: text.length / 4 // Estimate
+        // Use the object format to include tools
+        const result = await model.generateContent({
+          contents: [{
+            role: 'user',
+            parts: [
+              { text: prompt },
+              { inlineData: { data: videoBase64, mimeType: mimeType } }
+            ]
+          }],
+          generationConfig,
+          tools
         });
         
-        return text;
+        const response = result.response;
+        const responseText = response.text ? response.text() : '[No text response]';
+        const functionCalls = response.functionCalls();
+
+        // Log response for monitoring (adjusted)
+        logAIResponse('gemini', { 
+          responseText: responseText.substring(0, 100) + (responseText.length > 100 ? '...' : ''),
+          promptTokens: prompt.length / 4, // Estimate
+          mediaTokens: 'Video content', 
+          completionTokens: responseText.length / 4, // Estimate
+          functionCallPresent: !!functionCalls && functionCalls.length > 0,
+          functionCallNames: functionCalls?.map((fc: { name: string }) => fc.name).join(', ') || 'N/A'
+        });
+        
+        return result;
       } catch (error: any) {
         // Handle video-specific errors
         if (error.message.includes('content too large') || error.message.includes('payload size')) {

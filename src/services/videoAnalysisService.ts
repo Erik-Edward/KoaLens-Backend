@@ -11,6 +11,15 @@ import {
   logIngredientCorrection
 } from '../utils/videoLogger';
 import { checkIngredientStatus } from '../utils/ingredientsDatabase';
+import { z } from 'zod';
+
+// Import necessary types from @google/generative-ai
+import { 
+  FunctionDeclaration, 
+  GenerateContentResult, 
+  FunctionDeclarationsTool,
+  SchemaType
+} from '@google/generative-ai';
 
 // Type definitions (borrowed from ../types/analysisTypes.ts)
 interface IngredientAnalysisResult {
@@ -28,6 +37,81 @@ interface VideoAnalysisResult {
   reasoning?: string; // Explanation for vegan classification
   uncertainReasons?: string[]; // Anledningar till osäker status
 }
+
+// -- Start: Define Zod Schema --
+const ingredientAnalysisArgsSchema = z.object({
+  product_status: z.enum(["sannolikt vegansk", "sannolikt icke-vegansk", "oklart"]),
+  overall_confidence: z.number().min(0).max(1),
+  ingredients: z.array(z.object({
+    name: z.string().min(1, "Ingredient name cannot be empty"),
+    status: z.enum(["vegansk", "icke-vegansk", "osäker"]),
+    reasoning: z.string(), // Keep it simple for now, add minLength if needed
+    confidence: z.number().min(0).max(1),
+  })).min(0), // Allow empty ingredients array
+});
+// -- End: Define Zod Schema --
+
+// -- Start: Define Function Declaration and Argument Type --
+const recordIngredientAnalysisFunctionDeclaration: FunctionDeclaration = {
+  name: "recordIngredientAnalysis",
+  description: "Records the analysis of an ingredient list, classifying the overall product and each individual ingredient regarding its vegan status.",
+  parameters: {
+    type: SchemaType.OBJECT,
+    properties: {
+      product_status: {
+        type: SchemaType.STRING,
+        description: "Overall status of the product based on the ingredient analysis.",
+        enum: ["sannolikt vegansk", "sannolikt icke-vegansk", "oklart"],
+        format: 'enum'
+      },
+      overall_confidence: {
+        type: SchemaType.NUMBER,
+        description: "Overall confidence score (0.0 to 1.0) for the product status assessment.",
+      },
+      ingredients: {
+        type: SchemaType.ARRAY,
+        description: "An array containing the analysis for each identified ingredient.",
+        items: {
+          type: SchemaType.OBJECT,
+          properties: {
+            name: {
+              type: SchemaType.STRING,
+              description: "The name of the ingredient found in the list.",
+            },
+            status: {
+              type: SchemaType.STRING,
+              description: "Classification of the ingredient.",
+              enum: ["vegansk", "icke-vegansk", "osäker"],
+              format: 'enum'
+            },
+            reasoning: {
+              type: SchemaType.STRING,
+              description: "Brief explanation for why the ingredient received its status, especially if 'icke-vegansk' or 'osäker'.",
+            },
+            confidence: {
+              type: SchemaType.NUMBER,
+              description: "Confidence score (0.0 to 1.0) for the classification.",
+            },
+          },
+          required: ["name", "status", "reasoning", "confidence"],
+        },
+      },
+    },
+    required: ["product_status", "overall_confidence", "ingredients"],
+  },
+};
+
+type IngredientAnalysisArgs = {
+  product_status: "sannolikt vegansk" | "sannolikt icke-vegansk" | "oklart";
+  overall_confidence: number;
+  ingredients: {
+    name: string;
+    status: "vegansk" | "icke-vegansk" | "osäker";
+    reasoning: string;
+    confidence: number;
+  }[];
+};
+// -- End: Define Function Declaration and Argument Type --
 
 /**
  * Service class to handle video analysis using Gemini
@@ -124,85 +208,159 @@ export class VideoAnalysisService {
       // Build prompt for Gemini
       const prompt = this.buildAnalysisPrompt(preferredLanguage);
       
+      // Define the tools to be passed to the Gemini API
+      const tools: FunctionDeclarationsTool[] = [
+        { functionDeclarations: [recordIngredientAnalysisFunctionDeclaration] }
+      ];
+
       // Send to Gemini for analysis
       logger.info('Sending video for AI analysis', { 
         videoSizeKB: Math.round(videoBuffer.length / 1024),
         promptLength: prompt.length
       });
       
-      // First attempt - with standard processing
-      let result: VideoAnalysisResult;
+      let mappedResult: IngredientAnalysisArgs | null = null; // Changed variable name for clarity
+      let analysisResult: VideoAnalysisResult | null = null;
       let attemptCount = 0;
       const maxAttempts = 2;
       
       try {
+        // First Attempt
         attemptCount++;
-        const aiResponse = await geminiService.generateContentFromVideo(prompt, videoBase64, 'video/mp4');
-        result = this.parseAnalysisResult(aiResponse);
+        logger.info('Attempting video analysis with function calling', { attempt: attemptCount });
+        const aiResult: GenerateContentResult = await geminiService.generateContentFromVideo(
+          prompt, videoBase64, 'video/mp4', tools
+        );
+        const response = aiResult.response;
+        const functionCalls = response.functionCalls();
+
+        if (functionCalls && functionCalls.length > 0) {
+          const analysisCall = functionCalls.find(fc => fc.name === 'recordIngredientAnalysis');
+          if (analysisCall) {
+            logger.info('Received function call from Gemini', { functionName: analysisCall.name });
+            // Store raw args for potential validation
+            mappedResult = analysisCall.args as IngredientAnalysisArgs; 
+          } else {
+            logger.warn('Received function call, but not the expected one', {
+              receivedCalls: functionCalls.map(fc => fc.name)
+            });
+          }
+        }
+
+        // Fallback to text parsing if no function call
+        if (mappedResult === null) {
+          logger.info('No function call received, falling back to text parsing');
+          const textResponse = response.text();
+          if (!textResponse) {
+            throw new Error('AI response missing text content and no function call found.');
+          }
+          // Parse text, result might not conform to IngredientAnalysisArgs yet
+          analysisResult = this.parseAnalysisResult(textResponse); 
+        }
+
       } catch (error: any) {
-        logger.warn('First video analysis attempt failed, retrying with simplified prompt', { 
+        logger.warn('First video analysis attempt failed', { 
           error: error.message,
           attempt: attemptCount
         });
         
-        // Simplified retry if first attempt failed
+        // Retry Logic
         if (attemptCount < maxAttempts) {
+          logger.info('Retrying video analysis with simplified prompt and function calling', { attempt: attemptCount + 1 });
           attemptCount++;
-          // Simplify prompt for retry
           const simplifiedPrompt = `
-Analysera denna matprodukt. Lista alla ingredienser du kan se på förpackningen. 
-Översätt ingredienserna till svenska.
-För varje ingrediens, ange om den är vegansk (true) eller icke-vegansk (false).
+Analysera denna matprodukt. Använd verktyget 'recordIngredientAnalysis' för att strukturera ditt svar.
+Lista alla ingredienser du kan se på förpackningen. Översätt ingredienserna till svenska.
+För varje ingrediens, ange status ('vegansk', 'icke-vegansk', 'osäker'). Ge en kort motivering ('reasoning').
+Ange en konfidens (0.0-1.0).
 
-Ingredienser som kommer från djur är icke-veganska: ägg, mjölk, ost, kött, fisk, gelatin, honung.
-Växtbaserade ingredienser är veganska: soja, tofu, grönsaker, frukt, nötter, frön.
+Specifik Regel: 'Arom' utan specificerad källa ska klassas som 'osäker'.
 
-Svara med ENDAST ett JSON-objekt i detta format:
-\`\`\`json
-{
-  "ingredients": [
-    {
-      "name": "ingrediensnamn på svenska",
-      "isVegan": true/false,
-      "confidence": 0.5
-    }
-  ],
-  "isVegan": true/false,
-  "confidence": 0.5
-}
-\`\`\`
-
-Om du inte kan identifiera några ingredienser, svara med:
-\`\`\`json
-{
-  "ingredients": [],
-  "isVegan": false,
-  "confidence": 0.0
-}
-\`\`\`
+Ange produktens övergripande status ('sannolikt vegansk', 'sannolikt icke-vegansk', 'oklart') och konfidens.
 `;
-          const aiResponse = await geminiService.generateContentFromVideo(simplifiedPrompt, videoBase64, 'video/mp4');
-          result = this.parseAnalysisResult(aiResponse);
+          const aiResultRetry: GenerateContentResult = await geminiService.generateContentFromVideo(
+            simplifiedPrompt, videoBase64, 'video/mp4', tools
+          );
+          const responseRetry = aiResultRetry.response;
+          const functionCallsRetry = responseRetry.functionCalls();
+
+          if (functionCallsRetry && functionCallsRetry.length > 0) {
+            const analysisCallRetry = functionCallsRetry.find(fc => fc.name === 'recordIngredientAnalysis');
+            if (analysisCallRetry) {
+              logger.info('Received function call from Gemini on retry', { functionName: analysisCallRetry.name });
+              mappedResult = analysisCallRetry.args as IngredientAnalysisArgs; // Store raw args
+            } else {
+               logger.warn('Received function call on retry, but not the expected one', {
+                 receivedCalls: functionCallsRetry.map(fc => fc.name)
+               });
+            }
+          }
+
+          // Fallback to text parsing on retry
+          if (mappedResult === null) {
+            logger.info('No function call received on retry, falling back to text parsing');
+            const textResponseRetry = responseRetry.text();
+            if (!textResponseRetry) {
+              throw new Error('AI retry response missing text content and no function call found.');
+            }
+            analysisResult = this.parseAnalysisResult(textResponseRetry);
+          }
+
         } else {
+          logger.error('All video analysis attempts failed.');
           throw error; // Re-throw if all attempts failed
         }
       }
       
-      // Log the analysis completion
+      // --- Start: Validation and Mapping --- 
+      if (mappedResult) {
+        // Validate the function call arguments using Zod
+        try {
+          ingredientAnalysisArgsSchema.parse(mappedResult);
+          logger.info('Function call arguments successfully validated against Zod schema.');
+          // Map the validated args to the final result structure
+          analysisResult = this.mapFunctionArgsToAnalysisResult(mappedResult);
+        } catch (zodError: any) {
+          logger.error('Zod validation failed for function call arguments', { 
+            error: zodError.errors, // Log Zod specific errors
+            args: mappedResult 
+          });
+          // If validation fails, we could potentially fall back to text parsing again, 
+          // but let's throw an error for now to indicate a structural issue.
+          throw new Error('AI response via function call failed schema validation.');
+        }
+      } else if (analysisResult) {
+        // If we got here through text parsing fallback, analysisResult is already populated.
+        // We could potentially add Zod validation *after* parseAnalysisResult enhances it,
+        // but the structure might differ slightly. Let's skip Zod validation for text fallback for now.
+        logger.info('Proceeding with result obtained from text parsing fallback.');
+      } else {
+        // This case should ideally not be reached if the logic above is correct
+        throw new Error('Failed to obtain analysis result after all attempts and fallbacks.');
+      }
+      // --- End: Validation and Mapping --- 
+
+      // Ensure result is not null before proceeding
+      if (analysisResult === null) { // Check the final result variable
+        // This ensures we catch cases where mapping/parsing failed silently earlier
+        throw new Error('Analysis result is null after processing.');
+      }
+
+      // Log the analysis completion (using the final 'analysisResult')
       logVideoAnalysisResponse({
         processingTimeSec: (Date.now() - new Date().getTime()) / 1000,
-        ingredientCount: result.ingredients.length,
-        isVegan: result.isVegan,
-        isUncertain: result.isUncertain || false,
-        confidenceScore: result.confidence,
-        uncertainIngredientsCount: result.ingredients.filter((i: IngredientAnalysisResult) => i.isUncertain).length,
+        ingredientCount: analysisResult.ingredients.length,
+        isVegan: analysisResult.isVegan,
+        isUncertain: analysisResult.isUncertain || false,
+        confidenceScore: analysisResult.confidence,
+        uncertainIngredientsCount: analysisResult.ingredients.filter((i: IngredientAnalysisResult) => i.isUncertain).length,
         statusCode: 200
       });
       
       // Clean up temp files
       this.cleanupTempFiles(tempVideoPath, optimizedVideoPath);
       
-      return result;
+      return analysisResult; // Return the final validated/parsed result
     } catch (error: any) {
       // Log the error
       logVideoAnalysisResponse({
@@ -510,6 +668,12 @@ Om du inte kan identifiera några ingredienser, svara med:
      // Replace original list with unique list
      parsedResult.ingredients = uniqueIngredients;
 
+    // --- BEGIN DEBUG LOGGING ---
+    logger.debug('[enhanceAnalysisResult] Final ingredients before returning:', { 
+      ingredients: parsedResult.ingredients, 
+      aromIngredient: parsedResult.ingredients.find((ing: IngredientAnalysisResult) => ing.name.toLowerCase() === 'arom')
+    });
+    // --- END DEBUG LOGGING ---
 
     // 3. Determine final product status based on ingredient validation
     let finalIsVegan = false;
@@ -561,87 +725,27 @@ Om du inte kan identifiera några ingredienser, svara med:
    * Optimized based on recommendations for clarity and precision
    */
   private buildAnalysisPrompt(_language: string): string {
-    // Vi använder svenska oavsett valt språk för konsekvent output
+    // We use Swedish regardless of selected language for consistent output
+    // Updated prompt to encourage function calling and include specific rules
     return `
 Du är en expert på att analysera matprodukter och identifiera deras ingredienser för att avgöra om produkten är vegansk.
 
 INSTRUKTIONER:
-1. Analysera videon NOGGRANT. Identifiera ingredienserna som tydligt VISAS på produktens förpackning.
-2. Fokusera på ingredienslistan i videon.
-3. Översätt ALLA identifierade ingredienser till svenska. Använd vanliga svenska livsmedelsnamn.
-4. Bedöm om produkten är vegansk. En ingrediens är *inte* vegansk om den *definitivt* kommer från djur.
-   - Icke-veganska ingredienser: ägg, mjölk, ost, grädde, kött, fisk, gelatin, honung, bivax, lanolin, etc.
-   - Extra uppmärksam på E-nummer:
-     - E120 (karmin), E441 (gelatin), E901 (bivax), E904 (shellack), E920 (L-cystein) är INTE veganska.
-     - Andra E-nummer kan vara osäkra, men försök identifiera alla E-nummer du ser i ingredienslistan.
-   - Sojabaserade produkter (tofu, tempeh, sojasås, etc.) är ALLTID veganska.
-5. Lista varje identifierad ingrediens ENBART EN gång på svenska.
+1. Analysera videon NOGGRANT. Identifiera ingredienserna som tydligt VISAS på produktens förpackning, främst i ingredienslistan.
+2. Översätt ALLA identifierade ingredienser till svenska. Använd vanliga svenska livsmedelsnamn.
+3. Använd verktyget 'recordIngredientAnalysis' för att strukturera och returnera ditt svar.
+4. För varje identifierad ingrediens, ange dess status:
+   - 'vegansk': Om ingrediensen är växtbaserad eller syntetisk.
+   - 'icke-vegansk': Om ingrediensen DEFINITIVT kommer från djur (t.ex. mjölk, ägg, kött, gelatin, honung, E120, E441, E901, E904, L-cystein).
+   - 'osäker': Om ingrediensens ursprung är oklart eller kan variera (t.ex. vissa E-nummer som E471, mono- och diglycerider, lecitin om ej specificerat som soja).
+5. SPECIFIK REGEL: Ingrediensen 'Arom' ska klassificeras som 'osäker' om dess ursprung (t.ex. 'naturlig arom från växtriket') inte specificeras.
+6. För varje ingrediens, ange en konfidenspoäng (0.0-1.0) för din klassificering (status).
+7. VIKTIGT: För varje ingrediens med status 'icke-vegansk' eller 'osäker', MÅSTE du ange en kort motivering ('reasoning') som förklarar varför.
+8. Ange produktens övergripande status ('sannolikt vegansk', 'sannolikt icke-vegansk', 'oklart') och en övergripande konfidenspoäng.
+9. Inkludera ALLA identifierade ingredienser, men lista varje unik ingrediens endast EN gång.
+10. Basera din analys ENDAST på vad som FAKTISKT SYNS i videon.
 
-SVARA ENDAST med ett JSON-objekt i detta format (utan extra text före eller efter):
-
-\`\`\`json
-{
-  "ingredients": [
-    {
-      "name": "ingrediensnamn på svenska",
-      "isVegan": true/false,
-      "confidence": 0.0-1.0
-    }
-  ],
-  "isVegan": true/false,
-  "confidence": 0.0-1.0
-}
-\`\`\`
-
-Exempel på korrekt svar:
-
-\`\`\`json
-{
-  "ingredients": [
-    {
-      "name": "Majskorn",
-      "isVegan": true,
-      "confidence": 0.98
-    },
-    {
-      "name": "Palmolja",
-      "isVegan": true,
-      "confidence": 0.95
-    },
-    {
-      "name": "E471",
-      "isVegan": false,
-      "confidence": 0.95
-    },
-    {
-      "name": "Salt",
-      "isVegan": true,
-      "confidence": 0.99
-    }
-  ],
-  "isVegan": false,
-  "confidence": 0.97
-}
-\`\`\`
-
-Exempel på svar om inga ingredienser kan identifieras:
-
-\`\`\`json
-{
-  "ingredients": [],
-  "isVegan": false,
-  "confidence": 0.0
-}
-\`\`\`
-
-Se till att:
-1. Följa det exakta JSON-formatet UTAN extra text före eller efter.
-2. ALLTID översätta alla identifierade ingredienser till svenska.
-3. Ange "confidence" som ett nummer mellan 0 och 1.
-4. Markera ingredienser korrekt som veganska/icke-veganska.
-5. Inkludera ALLA identifierade ingredienser.
-6. Endast inkludera ingredienser som du FAKTISKT KAN SE i videon.
-7. Var extra uppmärksam på E-nummer och försök identifiera alla du ser.
+Använd verktyget 'recordIngredientAnalysis' för att returnera resultatet.
 `;
   }
   
@@ -675,6 +779,44 @@ Se till att:
         logger.warn('Failed to clean up temporary file', { filePath, error });
       }
     }
+  }
+
+  /**
+   * Maps arguments from the recordIngredientAnalysis function call to the VideoAnalysisResult structure.
+   * @param args The arguments object from the function call.
+   * @returns A VideoAnalysisResult object.
+   */
+  private mapFunctionArgsToAnalysisResult(args: IngredientAnalysisArgs): VideoAnalysisResult {
+    const isVeganOverall = args.product_status === 'sannolikt vegansk';
+    const isUncertainOverall = args.product_status === 'oklart';
+
+    const mappedIngredients = args.ingredients.map(ing => {
+      const isVeganIngredient = ing.status === 'vegansk';
+      const isUncertainIngredient = ing.status === 'osäker';
+      return {
+        name: ing.name,
+        isVegan: isVeganIngredient,
+        isUncertain: isUncertainIngredient,
+        confidence: ing.confidence,
+        // Note: per-ingredient reasoning is not directly stored in VideoAnalysisResult currently.
+        // We could potentially add it to uncertainReasons or a new field if needed.
+      };
+    });
+
+    // Collect reasoning for uncertain ingredients
+    const uncertainReasons = args.ingredients
+      .filter(ing => ing.status === 'osäker')
+      .map(ing => `${ing.name}: ${ing.reasoning}`);
+
+    return {
+      ingredients: mappedIngredients,
+      isVegan: isVeganOverall,
+      isUncertain: isUncertainOverall,
+      confidence: args.overall_confidence,
+      // Add uncertain reasons here. Could also add overall reasoning if model provides it.
+      uncertainReasons: uncertainReasons,
+      // reasoning: args.overall_reasoning // Add if overall reasoning is part of the schema later
+    };
   }
 }
 

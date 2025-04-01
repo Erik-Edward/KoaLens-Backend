@@ -6,6 +6,10 @@ import {
   ANIMAL_INDICATORS,
   SAFE_EXCEPTIONS 
 } from '@/constants/veganIngredients';
+import { logger } from '@/utils/logger';
+
+// Definiera threshold
+const FUZZY_MATCH_THRESHOLD = 0.8;
 
 export interface ValidationResult {
   isVegan: boolean | null;
@@ -199,41 +203,52 @@ export function validateIngredients(ingredients: string[]): ValidationResult {
     
     const normalizedIngredient = normalizeString(ingredient);
 
-    // Först kolla om det är ett exakt säkert undantag
-    const exactSafeMatch = findBestMatch(normalizedIngredient, SAFE_EXCEPTIONS, true);
-    if (exactSafeMatch.match) {
-      fuzzyMatches.push({
-        ingredient: normalizedIngredient,
-        matchedWith: exactSafeMatch.match,
-        similarity: exactSafeMatch.similarity
+    // Kontrollera först mot POTENTIALLY_NON_VEGAN (osäkra) ingredienser
+    const uncertainMatch = findBestMatch(normalizedIngredient, POTENTIALLY_NON_VEGAN);
+    
+    if (normalizedIngredient === 'arom') {
+      logger.debug('[validateIngredients] Checking "arom" against POTENTIALLY_NON_VEGAN', {
+        normalizedIngredient,
+        uncertainMatchResult: uncertainMatch,
+        threshold: FUZZY_MATCH_THRESHOLD
       });
-      debugInfo.push(`${ingredient} matchade exakt säkert undantag: ${exactSafeMatch.match}`);
-      continue;
     }
-
-    // Sedan kolla mot säkra undantag med fuzzy matching
-    const safeMatch = findBestMatch(normalizedIngredient, SAFE_EXCEPTIONS);
-    if (safeMatch.match) {
-      fuzzyMatches.push({
-        ingredient: normalizedIngredient,
-        matchedWith: safeMatch.match,
-        similarity: safeMatch.similarity
-      });
-      debugInfo.push(`${ingredient} matchade säkert undantag: ${safeMatch.match} (${(safeMatch.similarity * 100).toFixed(1)}% likhet)`);
-      continue;
+    
+    if (uncertainMatch.match) {
+        // Kontrollera om det också är ett säkert undantag (t.ex. "sojalecitin" vs "lecitin")
+        // Om det matchar ett säkert undantag starkare eller lika starkt, behandla som säkert.
+        const safeCheck = findBestMatch(normalizedIngredient, SAFE_EXCEPTIONS);
+        if (safeCheck.match && safeCheck.similarity >= uncertainMatch.similarity) {
+            fuzzyMatches.push({
+              ingredient: normalizedIngredient,
+              matchedWith: safeCheck.match,
+              similarity: safeCheck.similarity
+            });
+            debugInfo.push(`${ingredient} matchade potentiellt osäker (${uncertainMatch.match}) men starkare mot säkert undantag: ${safeCheck.match}`);
+            continue; // Fortsätt till nästa ingrediens
+        }
+        
+        // Annars, markera som osäker
+        uncertainFound.push(ingredient);
+        // Ingen sänkning av confidence här, osäkerhet är förväntat
+        fuzzyMatches.push({
+            ingredient: normalizedIngredient,
+            matchedWith: uncertainMatch.match,
+            similarity: uncertainMatch.similarity
+        });
+        debugInfo.push(`${ingredient} matchade osäker ingrediens: ${uncertainMatch.match} (${(uncertainMatch.similarity * 100).toFixed(1)}% likhet)`);
+        continue; // Gå vidare till nästa ingrediens efter osäker match
     }
-
-    // Kontrollera icke-veganska ingredienser
+    
+    // Kontrollera sedan mot DEFINITELY_NON_VEGAN ingredienser
     const nonVeganMatch = findBestMatch(normalizedIngredient, DEFINITELY_NON_VEGAN);
     if (nonVeganMatch.match) {
-      // Extra kontroll för sammansatta ord
+      // Extra kontroll för sammansatta ord/undantag (behåll denna logik)
       const isCompoundException = Array.from(SAFE_EXCEPTIONS).some(exception => {
         const normalizedException = normalizeString(exception);
-        // Kontrollera om hela ingrediensen är ett säkert undantag
         if (normalizedIngredient === normalizedException) {
           return true;
         }
-        // Kontrollera om det är ett sammansatt ord som börjar med ett säkert prefix
         const safeWords = ['havre', 'kokos', 'soja', 'mandel', 'ris', 'växt'];
         return safeWords.some(safeWord => 
           normalizedIngredient.startsWith(normalizeString(safeWord))
@@ -241,38 +256,30 @@ export function validateIngredients(ingredients: string[]): ValidationResult {
       });
 
       if (!isCompoundException) {
-        // If we suspect misreading, be more cautious about declaring non-vegan
-        if (suspiciousIngredients || partialWordPatterns || possibleGibberish.includes(ingredient)) {
-          uncertainFound.push(ingredient);
-          confidence = Math.min(confidence, 0.5);
-          debugInfo.push(`${ingredient} matchade icke-vegansk ingrediens men misstänks vara felläst: ${nonVeganMatch.match}`);
-        } else {
-          nonVeganFound.push(ingredient);
-          fuzzyMatches.push({
-            ingredient: normalizedIngredient,
-            matchedWith: nonVeganMatch.match,
-            similarity: nonVeganMatch.similarity
-          });
-          debugInfo.push(`${ingredient} matchade icke-vegansk ingrediens: ${nonVeganMatch.match} (${(nonVeganMatch.similarity * 100).toFixed(1)}% likhet)`);
-        }
-        continue;
+          // Om vi misstänker felläsning, markera som osäker istället för icke-vegansk
+          if (suspiciousIngredients || partialWordPatterns || possibleGibberish.includes(ingredient)) {
+              uncertainFound.push(ingredient);
+              confidence = Math.min(confidence, 0.5);
+              debugInfo.push(`${ingredient} matchade icke-vegansk ingrediens (${nonVeganMatch.match}) men misstänks vara felläst -> osäker`);
+          } else {
+              // Annars, markera som icke-vegansk
+              nonVeganFound.push(ingredient);
+              confidence = Math.min(confidence, 0.9); // Hög konfidensgrad för definitiv match
+              fuzzyMatches.push({
+                  ingredient: normalizedIngredient,
+                  matchedWith: nonVeganMatch.match,
+                  similarity: nonVeganMatch.similarity
+              });
+              debugInfo.push(`${ingredient} matchade icke-vegansk ingrediens: ${nonVeganMatch.match} (${(nonVeganMatch.similarity * 100).toFixed(1)}% likhet)`);
+          }
+          continue; // Gå vidare till nästa ingrediens efter icke-vegansk match/undantag
       } else {
-        debugInfo.push(`${ingredient} ignorerades som säkert sammansatt ord`);
+          // Logga att ett undantag hittades även om det matchade non-vegan listan
+          debugInfo.push(`${ingredient} matchade icke-vegansk (${nonVeganMatch.match}) men identifierades som säkert undantag/sammansatt ord.`);
+          // Låt den falla igenom till nästa steg (eller fortsätt om det var meningen)
+          // Fortsätt för att säkerställa att den inte fångas av ANIMAL_INDICATORS nedan
+          continue;
       }
-    }
-
-    // Kontrollera potentiellt icke-veganska ingredienser med högre känslighet
-    const potentialMatch = findBestMatch(normalizedIngredient, POTENTIALLY_NON_VEGAN);
-    if (potentialMatch.match) {
-      uncertainFound.push(ingredient);
-      // Significant reduction in confidence for uncertain ingredients
-      confidence = Math.min(confidence, 0.7);
-      fuzzyMatches.push({
-        ingredient: normalizedIngredient,
-        matchedWith: potentialMatch.match,
-        similarity: potentialMatch.similarity
-      });
-      debugInfo.push(`${ingredient} matchade potentiellt icke-vegansk ingrediens: ${potentialMatch.match} (${(potentialMatch.similarity * 100).toFixed(1)}% likhet)`);
     }
 
     // Kontrollera animaliska indikatorer i ingrediensnamnet

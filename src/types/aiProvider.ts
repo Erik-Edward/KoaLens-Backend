@@ -1,3 +1,5 @@
+import { GenerateContentResult } from '@google/generative-ai';
+
 /**
  * Common interface for AI providers (Gemini and Claude)
  * This interface allows for easy switching between providers
@@ -26,7 +28,7 @@ export interface AIProvider {
    * @param mimeType The MIME type of the video
    * @returns Promise resolving to the generated content
    */
-  generateContentFromVideo(prompt: string, videoBase64: string, mimeType: string): Promise<string>;
+  generateContentFromVideo(prompt: string, videoBase64: string, mimeType: string): Promise<GenerateContentResult | string>;
 
   /**
    * Count tokens in a prompt (or estimate)
