@@ -252,11 +252,10 @@ router.post('/analyze-video', (async (req: Request, res: Response) => {
     apiStats.totalProcessingTimeMs += processingTimeMs;
     apiStats.averageProcessingTimeMs = apiStats.totalProcessingTimeMs / apiStats.requestsProcessed;
     
-    // Return the analysis result in the expected frontend format
+    // Return the analysis result in the format expected by the frontend
     res.status(200).json({
       success: true,
-      result: transformedResult,
-      processingTime: processingTimeMs / 1000
+      responseData: transformedResult
     });
     
     // Log the full response for debugging
