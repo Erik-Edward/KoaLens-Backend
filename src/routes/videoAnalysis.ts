@@ -1,9 +1,6 @@
 import { Router, Request, Response, RequestHandler } from 'express';
 import { logger } from '../utils/logger';
 import videoAnalysisService from '../services/videoAnalysisService';
-import { 
-  ingredientTranslations
-} from '../utils/ingredientsDatabase';
 
 // Local type definition for request
 interface MediaAnalysisRequest {
@@ -202,41 +199,42 @@ router.post('/analyze-video', (async (req: Request, res: Response) => {
     const result = await videoAnalysisService.analyzeVideo(
       base64Data,
       mimeType,
-      preferredLanguage || 'sv' // Default to Swedish
+      preferredLanguage || 'sv' // Default to Swedish if not provided
     );
     
     const processingTime = (Date.now() - startTime) / 1000;
-    logger.info('Video analysis completed', { 
+    logger.info('Video analysis completed by service', { 
       processingTimeSec: processingTime.toFixed(2),
       ingredientCount: result.ingredients.length,
       isVegan: result.isVegan,
+      isUncertain: result.isUncertain,
       requestId: requestId || 'not-provided'
     });
     
-    // Transform the result to match the expected frontend structure
+    // Transform the result - NO LONGER needs translation here
     const transformedResult = {
       isVegan: result.isVegan,
       isUncertain: result.isUncertain || false,
       confidence: result.confidence,
-      ingredientList: result.ingredients.map(ingredient => ingredient.name),
+      // ingredientList now uses the translated names directly from the service
+      ingredientList: result.ingredients.map(ingredient => ingredient.name), 
       watchedIngredients: result.ingredients
-        .filter(ingredient => !ingredient.isVegan || ingredient.isUncertain) // Inkludera alla ingredienser som antingen inte är veganska eller osäkra
-        .map(ingredient => ({
-          name: ingredient.name,
-          // Behåll 'reason' för bakåtkompatibilitet, men lägg också till 'status' för framtida användning
-          reason: ingredient.isUncertain ? 'uncertain' : 'non-vegan',
+        .filter(ingredient => !ingredient.isVegan || ingredient.isUncertain)
+        .map(ingredient => ({ 
+          // Use the (already translated) name from the result
+          name: ingredient.name, 
           status: ingredient.isUncertain ? 'uncertain' : 'non-vegan',
+          // Description can remain as is, it uses the name directly
           description: ingredient.isUncertain 
             ? `Ingrediensen "${ingredient.name}" kan vara vegansk eller icke-vegansk.`
             : `Ingrediensen "${ingredient.name}" är inte vegansk.`
         })),
-      // Separata listor för osäkra och icke-veganska ingredienser
       nonVeganIngredients: result.ingredients
         .filter(ingredient => !ingredient.isVegan && !ingredient.isUncertain)
-        .map(ingredient => ingredient.name),
+        .map(ingredient => ingredient.name), // Use translated name
       uncertainIngredients: result.ingredients
         .filter(ingredient => ingredient.isUncertain)
-        .map(ingredient => ingredient.name),
+        .map(ingredient => ingredient.name), // Use translated name
       uncertainReasons: result.uncertainReasons || [],
       reasoning: result.reasoning || ''
     };
@@ -264,8 +262,9 @@ router.post('/analyze-video', (async (req: Request, res: Response) => {
         isVegan: transformedResult.isVegan,
         confidence: transformedResult.confidence,
         ingredientCount: transformedResult.ingredientList?.length || 0,
-        ingredientsList: transformedResult.ingredientList,
-        watchedIngredients: transformedResult.watchedIngredients,
+        // Log the first few translated ingredients for verification
+        ingredientsListPreview: transformedResult.ingredientList?.slice(0, 5).join(', '), 
+        watchedIngredientsCount: transformedResult.watchedIngredients?.length || 0,
         responseSize: JSON.stringify(transformedResult).length,
         requestId: requestId || 'not-provided'
       }
@@ -303,17 +302,20 @@ router.post('/analyze-video', (async (req: Request, res: Response) => {
  */
 router.get('/ingredients', (async (_req: Request, res: Response) => {
   try {
-    // Return the current database
+    // Return the current database structure (without actual translations data)
+    // We keep the structure for potential monitoring tools that might expect it
+    // but avoid loading/sending potentially large translation data unnecessarily.
     res.status(200).json({
       success: true,
       data: {
-        veganIngredients: [],
+        // Placeholder arrays, actual data loaded elsewhere when needed
+        veganIngredients: [], 
         nonVeganIngredients: [],
-        translations: ingredientTranslations
+        translations: {} // Return empty object instead of removed variable
       }
     });
   } catch (error: any) {
-    logger.error('Error retrieving ingredients database', { error });
+    logger.error('Error retrieving ingredients database structure', { error });
     res.status(500).json({
       success: false,
       error: error.message

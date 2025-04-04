@@ -43,18 +43,19 @@ const ingredientAnalysisArgsSchema = z.object({
   product_status: z.enum(["sannolikt vegansk", "sannolikt icke-vegansk", "oklart"]),
   overall_confidence: z.number().min(0).max(1),
   ingredients: z.array(z.object({
-    name: z.string().min(1, "Ingredient name cannot be empty"),
+    name: z.string().min(1, "Ingredient name cannot be empty (original language)"),
+    translated_name: z.string().min(1, "Translated ingredient name cannot be empty"),
     status: z.enum(["vegansk", "icke-vegansk", "osäker"]),
-    reasoning: z.string(), // Keep it simple for now, add minLength if needed
+    reasoning: z.string(),
     confidence: z.number().min(0).max(1),
-  })).min(0), // Allow empty ingredients array
+  })).min(0),
 });
 // -- End: Define Zod Schema --
 
 // -- Start: Define Function Declaration and Argument Type --
 const recordIngredientAnalysisFunctionDeclaration: FunctionDeclaration = {
   name: "recordIngredientAnalysis",
-  description: "Records the analysis of an ingredient list, classifying the overall product and each individual ingredient regarding its vegan status.",
+  description: "Records the analysis of an ingredient list, classifying the overall product and each individual ingredient regarding its vegan status, including original and translated names.",
   parameters: {
     type: SchemaType.OBJECT,
     properties: {
@@ -76,7 +77,11 @@ const recordIngredientAnalysisFunctionDeclaration: FunctionDeclaration = {
           properties: {
             name: {
               type: SchemaType.STRING,
-              description: "The name of the ingredient found in the list.",
+              description: "The original name of the ingredient as found on the packaging.",
+            },
+            translated_name: {
+              type: SchemaType.STRING,
+              description: "The name of the ingredient translated to the requested language.",
             },
             status: {
               type: SchemaType.STRING,
@@ -93,7 +98,7 @@ const recordIngredientAnalysisFunctionDeclaration: FunctionDeclaration = {
               description: "Confidence score (0.0 to 1.0) for the classification.",
             },
           },
-          required: ["name", "status", "reasoning", "confidence"],
+          required: ["name", "translated_name", "status", "reasoning", "confidence"],
         },
       },
     },
@@ -106,6 +111,7 @@ type IngredientAnalysisArgs = {
   overall_confidence: number;
   ingredients: {
     name: string;
+    translated_name: string;
     status: "vegansk" | "icke-vegansk" | "osäker";
     reasoning: string;
     confidence: number;
@@ -243,6 +249,14 @@ export class VideoAnalysisService {
             logger.info('Received function call from Gemini', { functionName: analysisCall.name });
             // Store raw args for potential validation
             mappedResult = analysisCall.args as IngredientAnalysisArgs; 
+            
+            // --- BEGIN DEBUG LOGGING --- 
+            // Log the raw arguments received directly from the function call
+            logger.debug('[AnalyzeVideo] Raw function call arguments received:', { 
+              args: JSON.stringify(mappedResult) // Stringify for easier viewing of the whole object
+            });
+            // --- END DEBUG LOGGING --- 
+            
           } else {
             logger.warn('Received function call, but not the expected one', {
               receivedCalls: functionCalls.map(fc => fc.name)
@@ -597,12 +611,28 @@ export class VideoAnalysisService {
     
     // 1. Validate ingredients against database and update status/confidence
     for (const ingredient of preliminaryResult.ingredients) {
-      if (!ingredient || !ingredient.name) continue;
+      if (!ingredient || !ingredient.name) {
+        logger.warn('Skipping invalid ingredient during enhancement', { ingredient });
+        continue;
+      }
+
+      const ingredientNameForLog = ingredient.name; // Capture name for logging
+      // --- BEGIN DEBUG LOGGING --- 
+      logger.debug(`[Enhance Step 1] Processing ingredient: "${ingredientNameForLog}"`, {
+          initialIsVegan: ingredient.isVegan,
+          initialIsUncertain: ingredient.isUncertain,
+          initialConfidence: ingredient.confidence
+      });
+      // --- END DEBUG LOGGING --- 
 
       const originalIsVegan = ingredient.isVegan;
       const originalIsUncertain = ingredient.isUncertain || false;
 
       const dbStatus = checkIngredientStatus(ingredient.name);
+      
+      // --- BEGIN DEBUG LOGGING --- 
+      logger.debug(`[Enhance Step 2] DB status for "${ingredientNameForLog}"`, { dbStatus });
+      // --- END DEBUG LOGGING --- 
 
       if (dbStatus.isVegan === false) {
         // Definitely non-vegan according to database
@@ -654,9 +684,17 @@ export class VideoAnalysisService {
         ingredient.confidence = 0.98; // High confidence from DB
       }
       // If no database match, keep AI's assessment
+      
+      // --- BEGIN DEBUG LOGGING --- 
+      logger.debug(`[Enhance Step 3] Final status for "${ingredientNameForLog}" after DB check`, {
+          finalIsVegan: ingredient.isVegan,
+          finalIsUncertain: ingredient.isUncertain,
+          finalConfidence: ingredient.confidence
+      });
+      // --- END DEBUG LOGGING --- 
     }
     
-    // 2. Process and deduplicate ingredients (keeping existing code from original function)
+    // 2. Process and deduplicate ingredients
     const processedNames = new Set<string>();
     const uniqueIngredients: IngredientAnalysisResult[] = [];
 
@@ -677,7 +715,7 @@ export class VideoAnalysisService {
     
     preliminaryResult.ingredients = uniqueIngredients;
     
-    // 3. CRUCIAL CHANGE: Determine final product status based on ingredients
+    // 3. Determine final product status based on ingredients
     const finalStatus = this._determineFinalStatusFromIngredients(preliminaryResult.ingredients);
     
     // 4. Generate reasoning text
@@ -713,39 +751,38 @@ export class VideoAnalysisService {
   
   /**
    * Maps arguments from the recordIngredientAnalysis function call to a PRELIMINARY VideoAnalysisResult.
-   * Does NOT determine the final vegan/uncertain status here - that happens in enhanceAnalysisResult.
+   * Uses the translated_name provided by the AI.
    * @param args The arguments object from the function call.
    * @returns A preliminary VideoAnalysisResult object.
    */
   private mapFunctionArgsToPreliminaryResult(args: IngredientAnalysisArgs): VideoAnalysisResult {
-    logger.debug('Mapping function call args to preliminary result structure.');
+    logger.debug('Mapping function call args to preliminary result structure using translated names.');
     
     const mappedIngredients = args.ingredients.map(ing => {
       const isVeganIngredient = ing.status === 'vegansk';
       const isUncertainIngredient = ing.status === 'osäker';
       return {
-        name: ing.name,
+        name: ing.translated_name, // Use the translated name from AI
+        // originalName: ing.name, // Optional: Keep original name if needed elsewhere
         isVegan: isVeganIngredient,
         isUncertain: isUncertainIngredient,
         confidence: ing.confidence,
       };
     });
 
-    // Collect reasoning for uncertain ingredients (for reference only)
+    // Collect reasoning for uncertain ingredients (using translated name for clarity)
     const uncertainReasons = args.ingredients
       .filter(ing => ing.status === 'osäker')
-      .map(ing => `${ing.name}: ${ing.reasoning}`);
+      .map(ing => `${ing.translated_name}: ${ing.reasoning}`); // Use translated name in reason
 
-    // Return a preliminary structure - note that isVegan/isUncertain from product_status 
-    // are NOT used to set the final values - these will be recalculated in enhanceAnalysisResult
+    // Return preliminary structure, status determined later by enhanceAnalysisResult
     return {
       ingredients: mappedIngredients,
-      // Store the AI's opinion in the preliminary result, but will be recalculated
       isVegan: args.product_status === 'sannolikt vegansk',
       isUncertain: args.product_status === 'oklart',
       confidence: args.overall_confidence,
       uncertainReasons: uncertainReasons,
-      reasoning: `AI-bedömning: ${args.product_status}` // For reference only
+      reasoning: `AI-bedömning: ${args.product_status}`
     };
   }
   
@@ -766,31 +803,35 @@ Ange produktens övergripande status ('sannolikt vegansk', 'sannolikt icke-vegan
   }
   
   /**
-   * Build a prompt for the AI to analyze food product ingredients
-   * @param _language Preferred language (currently only Swedish supported)
+   * Build a prompt for the AI to analyze food product ingredients and translate them.
+   * @param preferredLanguage The target language for translation (e.g., 'en', 'sv').
    */
-  private buildAnalysisPrompt(_language: string): string {
-    // We use Swedish regardless of selected language for consistent output
-    // Updated prompt to encourage function calling and include specific rules
+  private buildAnalysisPrompt(preferredLanguage: string): string {
+    // Ensure language code is lowercase for consistency if needed, though Gemini might handle various cases.
+    const targetLanguage = preferredLanguage.toLowerCase(); 
+    const languageName = targetLanguage === 'en' ? 'English' : 'Swedish'; // Simple mapping for prompt clarity
+
+    // Updated prompt instructing AI to translate to preferredLanguage
     return `
 Du är en expert på att analysera matprodukter och identifiera deras ingredienser för att avgöra om produkten är vegansk.
 
-INSTRUKTIONER:
-1. Analysera videon NOGGRANT. Identifiera ingredienserna som tydligt VISAS på produktens förpackning, främst i ingredienslistan.
-2. Översätt ALLA identifierade ingredienser till svenska. Använd vanliga svenska livsmedelsnamn.
-3. Använd verktyget 'recordIngredientAnalysis' för att strukturera och returnera ditt svar.
-4. För varje identifierad ingrediens, ange dess status:
-   - 'vegansk': Om ingrediensen är växtbaserad eller syntetisk.
-   - 'icke-vegansk': Om ingrediensen DEFINITIVT kommer från djur (t.ex. mjölk, ägg, kött, gelatin, honung, E120, E441, E901, E904, L-cystein).
-   - 'osäker': Om ingrediensens ursprung är oklart eller kan variera (t.ex. vissa E-nummer som E471, mono- och diglycerider, lecitin om ej specificerat som soja).
-5. SPECIFIK REGEL: Ingrediensen 'Arom' ska klassificeras som 'osäker' om dess ursprung (t.ex. 'naturlig arom från växtriket') inte specificeras.
-6. För varje ingrediens, ange en konfidenspoäng (0.0-1.0) för din klassificering (status).
-7. VIKTIGT: För varje ingrediens med status 'icke-vegansk' eller 'osäker', MÅSTE du ange en kort motivering ('reasoning') som förklarar varför.
-8. Ange produktens övergripande status ('sannolikt vegansk', 'sannolikt icke-vegansk', 'oklart') och en övergripande konfidenspoäng.
-9. Inkludera ALLA identifierade ingredienser, men lista varje unik ingrediens endast EN gång.
-10. Basera din analys ENDAST på vad som FAKTISKT SYNS i videon.
+MÅLSPRÅK för översättning: ${languageName} (${targetLanguage})
 
-Använd verktyget 'recordIngredientAnalysis' för att returnera resultatet.
+INSTRUKTIONER:
+1. Analysera videon NOGGRANT. Identifiera ingredienserna som tydligt VISAS på produktens förpackning.
+2. Använd verktyget 'recordIngredientAnalysis' för att strukturera och returnera ditt svar.
+3. För varje identifierad ingrediens:
+   a. Ange ingrediensens **originalnamn** (som det står på förpackningen) i fältet 'name'.
+   b. **Översätt originalnamnet till målspråket (${languageName})** och ange det i fältet 'translated_name'. Om du inte kan översätta, ange originalnamnet även i 'translated_name'.
+   c. Ange dess status: 'vegansk', 'icke-vegansk', 'osäker'.
+   d. SPECIFIK REGEL: Ingrediensen 'Arom' (eller motsvarande på andra språk) ska klassificeras som 'osäker' om dess ursprung inte specificeras.
+   e. Ange en konfidenspoäng (0.0-1.0) för statusklassificeringen.
+   f. VIKTIGT: För 'icke-vegansk' eller 'osäker' status, MÅSTE du ange en kort motivering ('reasoning').
+4. Ange produktens övergripande status ('sannolikt vegansk', 'sannolikt icke-vegansk', 'oklart') och en övergripande konfidenspoäng.
+5. Inkludera ALLA identifierade ingredienser, men lista varje unik ingrediens endast EN gång baserat på dess originalnamn.
+6. Basera din analys ENDAST på vad som FAKTISKT SYNS i videon.
+
+Använd verktyget 'recordIngredientAnalysis' för att returnera resultatet med både originalnamn ('name') och namn översatta till ${languageName} ('translated_name').
 `;
   }
   

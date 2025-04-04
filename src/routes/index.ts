@@ -5,6 +5,7 @@ import testGeminiRoutes from './testGemini';
 import analyzeRoutes from './analyzeRoutes';
 import aiRoutes from './aiRoutes';
 import videoAnalysisRoutes from './videoAnalysis';
+import reportRoutes from './reportRoutes';
 
 const router = express.Router();
 
@@ -20,6 +21,9 @@ router.use('/ai', testGeminiRoutes);
 
 // Register video analysis routes
 router.use('/video', videoAnalysisRoutes);
+
+// Register report routes
+router.use('/report', reportRoutes);
 
 // Add other routes here as needed
 // e.g. router.use('/products', productRoutes);
