@@ -41,12 +41,17 @@ EXPOSE 8080
 ENV NODE_ENV=production
 ENV PORT=8080
 
-# --- Restore original ENTRYPOINT and CMD --- 
-ENTRYPOINT ["node"]
-CMD ["dist/server.js"]
+# --- TEMPORARY DEBUG ENTRYPOINT --- 
+# Keep the container running indefinitely for SSH access
+ENTRYPOINT ["sleep", "infinity"]
 
-# --- Debug Entrypoints/CMDs (commented out) ---
-# ENTRYPOINT ["sleep", "infinity"]
+# Original ENTRYPOINT (commented out)
+# ENTRYPOINT ["node"]
+
+# Original CMD (commented out)
+# CMD ["dist/server.js"]
+
+# --- Debug CMDs (commented out) ---
 # CMD ["echo", "--- Simple echo test: SUCCESS ---"]
 # CMD ["node", "-e", "console.log('--- Node.js execution test: SUCCESS ---');"]
 # CMD ["ls", "-la", "/app/dist"] 
