@@ -41,11 +41,14 @@ ENV PORT=8080
 # CMD ["node", "dist/server.js"]
 
 # --- TEMPORARY DEBUG CMD ---
-# Test if Node.js itself can execute a simple command
-CMD ["node", "-e", "console.log('--- Node.js execution test: SUCCESS ---');"]
+# Test if *any* command can be executed via CMD
+CMD ["echo", "--- Simple echo test: SUCCESS ---"]
 
 # Original CMD (commented out)
 # CMD ["node", "dist/server.js"]
+
+# Previous debug CMD (commented out)
+# CMD ["node", "-e", "console.log('--- Node.js execution test: SUCCESS ---');"]
 
 # Previous debug CMD (commented out)
 # CMD ["ls", "-la", "/app/dist"] 
