@@ -2,6 +2,7 @@
 import { createReadStream } from 'fs';
 import { parse, Parser } from 'csv-parse';
 import path from 'path';
+import fs from 'fs';
 
 interface IngredientInfo {
   name: string;
@@ -20,34 +21,34 @@ class IngredientDatabase {
   private uncertainIngredients: Map<string, IngredientInfo> = new Map();
 
   constructor() {
-    this.loadDatabase('non-vegan.csv', this.nonVeganIngredients);
-    this.loadDatabase('uncertain.csv', this.uncertainIngredients);
+    this.loadDatabaseSync('non-vegan.csv', this.nonVeganIngredients);
+    this.loadDatabaseSync('uncertain.csv', this.uncertainIngredients);
   }
 
-  private loadDatabase(filename: string, targetMap: Map<string, IngredientInfo>) {
+  private loadDatabaseSync(filename: string, targetMap: Map<string, IngredientInfo>) {
     const filePath = path.join(__dirname, '..', 'data', filename);
-    
-    createReadStream(filePath)
-      .pipe(parse({ 
-        columns: true, 
-        skip_empty_lines: true,
-        trim: true // Trimma whitespace från värden
-      }) as Parser)
-      .on('data', (row: CSVRow) => {
-        // Validera att vi har ett namn innan vi försöker använda det
-        if (row && row.name && typeof row.name === 'string') {
-          targetMap.set(row.name.toLowerCase(), {
-            name: row.name,
-            e_number: row.e_number || undefined,
-            description: row.description || undefined
+    try {
+      const content = fs.readFileSync(filePath, 'utf8');
+      const rows = content.split('\n').filter(row => row.trim());
+      const header = rows[0]?.toLowerCase().includes('name');
+      const dataRows = header ? rows.slice(1) : rows;
+
+      for (const row of dataRows) {
+        const fields = row.split(',').map(field => field.replace(/^"|"$/g, '').trim());
+        if (fields.length > 0 && fields[0]) {
+          targetMap.set(fields[0].toLowerCase(), {
+            name: fields[0],
+            e_number: fields[1] || undefined,
+            description: fields[2] || undefined
           });
         } else {
-          console.warn('Skipping invalid row in CSV:', row);
+          console.warn(`Skipping invalid row in ${filename}:`, row);
         }
-      })
-      .on('error', (error: Error) => {
-        console.error(`Error loading ${filename}:`, error);
-      });
+      }
+      console.log(`Successfully loaded ${targetMap.size} entries from ${filename} synchronously.`);
+    } catch (error) {
+      console.error(`Error loading ${filename} synchronously:`, error);
+    }
   }
 
   public checkIngredient(ingredient: string): {
