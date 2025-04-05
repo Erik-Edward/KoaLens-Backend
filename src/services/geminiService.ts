@@ -1,6 +1,6 @@
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold, GenerationConfig, GenerateContentResult, FunctionDeclarationsTool } from '@google/generative-ai';
 import { AIProvider } from '../types/aiProvider';
-import config from '@/config/ai-config';
+import config from '../config/ai-config.js';
 import { logger, logAIRequest, logAIResponse } from '../utils/logger';
 
 /**
