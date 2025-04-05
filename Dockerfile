@@ -37,5 +37,9 @@ EXPOSE 8080
 ENV NODE_ENV=production
 ENV PORT=8080
 
-# Run the app
-CMD ["node", "dist/server.js"] 
+# Run the app when the container launches
+# CMD ["node", "dist/server.js"]
+
+# --- TEMPORARY DEBUG CMD ---
+# List the contents of the dist directory to verify build artifacts
+CMD ["ls", "-la", "/app/dist"] 
