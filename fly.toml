@@ -13,7 +13,7 @@ primary_region = 'arn'
   PORT = '8080'
 
 [processes]
-  app = "npm start"
+  app = "node dist/server.js"
 
 [[services]]
   processes = ["app"]
