@@ -11,7 +11,7 @@
   "scripts": {
     "start": "node -r tsconfig-paths/register dist/server.js",
     "dev": "set NODE_ENV=development && ts-node-dev -r tsconfig-paths/register src/server.ts",
-    "build": "tsc && tsc-alias",
+    "build": "tsc && powershell -Command \\\"Copy-Item src/config dist -Recurse -Force\\\" && tsc-alias",
     "postinstall": "npm run build",
     "test": "set NODE_ENV=test && jest --watchAll",
     "test:coverage": "jest --coverage",
