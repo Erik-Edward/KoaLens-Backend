@@ -1,8 +1,8 @@
 // src/server.ts
 console.log("--- Server.ts script starting ---"); 
 
-// Activate module-alias for runtime path mapping - Temporarily disable to test tsc-alias reliability
-// import 'module-alias/register'; 
+// Restore module-alias for runtime path mapping
+import 'module-alias/register'; 
 
 import express from 'express';
 import cors from 'cors';
