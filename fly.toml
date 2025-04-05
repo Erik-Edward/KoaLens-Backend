@@ -5,8 +5,8 @@ primary_region = 'arn'
 [build]
   builder = "heroku/builder:24"
 
-[deploy]
-  release_command = 'npm run build'
+# [deploy]
+#  release_command = 'npm run build'
 
 [env]
   NODE_ENV = 'production'
