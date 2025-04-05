@@ -1,29 +1,41 @@
-# Use an official Node.js runtime as a parent image
-# Using Node 20 based on your package.json engines requirement
-FROM node:20-slim
+# Stage 1: Builder
+FROM node:20-slim AS builder
 
-# Set the working directory in the container
 WORKDIR /app
 
-# Install app dependencies
-# A wildcard is used to ensure both package.json AND package-lock.json are copied
+# Copy package files
 COPY package*.json ./
 
-# Install only production dependencies
-RUN npm ci --omit=dev
+# Install ALL dependencies (including devDependencies for build)
+RUN npm ci
 
-# Bundle app source
+# Copy the rest of the application source code
 COPY . .
 
-# Build the TypeScript source to JavaScript
+# Run the build script (tsc, copy assets, tsc-alias)
 RUN npm run build
 
-# Make port 8080 available to the world outside this container
+# Prune devDependencies after build (Optional but good practice)
+RUN npm prune --omit=dev
+
+# Stage 2: Final Production Image
+FROM node:20-slim
+
+WORKDIR /app
+
+# Copy package.json and pruned node_modules from the builder stage
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/node_modules ./node_modules
+
+# Copy the built application code (dist folder) from the builder stage
+COPY --from=builder /app/dist ./dist
+
+# Make port 8080 available
 EXPOSE 8080
 
-# Define environment variable (redundant with fly.toml but good practice)
+# Define environment variables
 ENV NODE_ENV=production
 ENV PORT=8080
 
-# Run the app when the container launches
+# Run the app
 CMD ["node", "dist/server.js"] 
