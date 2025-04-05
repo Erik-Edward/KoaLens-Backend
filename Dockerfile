@@ -37,18 +37,13 @@ EXPOSE 8080
 ENV NODE_ENV=production
 ENV PORT=8080
 
-# Run the app when the container launches
-# CMD ["node", "dist/server.js"]
+# Explicitly set the entrypoint to node
+ENTRYPOINT ["node"]
 
-# --- TEMPORARY DEBUG CMD ---
-# Test if *any* command can be executed via CMD
-CMD ["echo", "--- Simple echo test: SUCCESS ---"]
+# CMD now provides only the arguments to the entrypoint (node)
+CMD ["dist/server.js"]
 
-# Original CMD (commented out)
-# CMD ["node", "dist/server.js"]
-
-# Previous debug CMD (commented out)
+# --- Debug CMDs (commented out) ---
+# CMD ["echo", "--- Simple echo test: SUCCESS ---"]
 # CMD ["node", "-e", "console.log('--- Node.js execution test: SUCCESS ---');"]
-
-# Previous debug CMD (commented out)
 # CMD ["ls", "-la", "/app/dist"] 
