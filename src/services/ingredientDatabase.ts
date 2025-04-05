@@ -1,6 +1,4 @@
 // C:\Projects\koalens-backend\src\services\ingredientDatabase.ts
-import { createReadStream } from 'fs';
-import { parse, Parser } from 'csv-parse';
 import path from 'path';
 import fs from 'fs';
 
@@ -8,12 +6,6 @@ interface IngredientInfo {
   name: string;
   e_number?: string;
   description?: string;
-}
-
-interface CSVRow {
-  name: string;
-  e_number: string;
-  description: string;
 }
 
 class IngredientDatabase {
@@ -26,7 +18,7 @@ class IngredientDatabase {
   }
 
   private loadDatabaseSync(filename: string, targetMap: Map<string, IngredientInfo>) {
-    const filePath = path.join(__dirname, '..', 'data', filename);
+    const filePath = path.join('/workspace', 'dist', 'data', filename);
     try {
       const content = fs.readFileSync(filePath, 'utf8');
       const rows = content.split('\n').filter(row => row.trim());
