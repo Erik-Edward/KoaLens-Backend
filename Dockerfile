@@ -41,5 +41,11 @@ ENV PORT=8080
 # CMD ["node", "dist/server.js"]
 
 # --- TEMPORARY DEBUG CMD ---
-# List the contents of the dist directory to verify build artifacts
-CMD ["ls", "-la", "/app/dist"] 
+# Test if Node.js itself can execute a simple command
+CMD ["node", "-e", "console.log('--- Node.js execution test: SUCCESS ---');"]
+
+# Original CMD (commented out)
+# CMD ["node", "dist/server.js"]
+
+# Previous debug CMD (commented out)
+# CMD ["ls", "-la", "/app/dist"] 
