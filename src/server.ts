@@ -1,7 +1,9 @@
 // src/server.ts
 console.log("--- Server.ts script starting ---"); 
 
-// Ta bort denna import: import 'module-alias/register';
+// Activate module-alias for runtime path mapping
+import 'module-alias/register'; 
+
 import express from 'express';
 import cors from 'cors';
 // Remove Anthropic import
