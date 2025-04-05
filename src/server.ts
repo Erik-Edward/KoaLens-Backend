@@ -2,14 +2,14 @@
 console.log("--- Server.ts script starting ---"); 
 
 // Ta bort denna import: import 'module-alias/register';
-import express, { RequestHandler } from 'express';
+import express from 'express';
 import cors from 'cors';
 // Remove Anthropic import
 // import { Anthropic } from '@anthropic-ai/sdk'; 
 import dotenv from 'dotenv';
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold, GenerationConfig, Content } from "@google/generative-ai"; // Import Gemini
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold, GenerationConfig } from "@google/generative-ai"; // Import Gemini
 // Assume Gemini prompts exist or define them here/import from config
-import { GEMINI_ANALYSIS_PROMPT, GEMINI_CROPPED_IMAGE_PROMPT } from '@/config/prompts'; 
+import { ANALYSIS_PROMPT, CROPPED_IMAGE_PROMPT } from '@/config/prompts'; 
 import { validateIngredients } from '@/services/veganValidator';
 import { compressImage, getBase64Size } from '@/utils/imageProcessor';
 import { checkUserLimit, incrementAnalysisCount } from '@/services/supabaseService';
@@ -84,13 +84,11 @@ interface IngredientAnalysisResult {
   };
 }
 
-interface QualityIssue {
-  type: 'BLUR' | 'INCOMPLETE' | 'LIGHTING' | 'UNCERTAINTY';
-  message: string;
-}
+// Remove unused QualityIssue interface
+// interface QualityIssue { ... }
 
 interface StandardError {
-  error: 'IMAGE_QUALITY' | 'ANALYSIS_ERROR' | 'IMAGE_MISSING' | 'USAGE_LIMIT_EXCEEDED';
+  error: 'IMAGE_QUALITY' | 'ANALYSIS_ERROR' | 'IMAGE_MISSING' | 'USAGE_LIMIT_EXCEEDED' | 'SERVER_ERROR'; // Added SERVER_ERROR
   message: string;
   details?: {
     issues?: string[];
@@ -124,23 +122,20 @@ interface AnalyzeRequestBody {
 // function getUserFriendlyError(...) { ... }
 
 // --- REFACTOR analyzeImage function ---
-const analyzeImage: RequestHandler = async (req, res) => {
+const analyzeImage = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
   try {
     console.log('Received analyze request (Gemini)');
     const { image, isCroppedImage, userId } = req.body as AnalyzeRequestBody;
 
     if (!image) {
-      console.log('No image provided in request');
-      return res.status(400).json({
-        error: 'IMAGE_MISSING',
-        message: 'Ingen bild hittades',
-        details: {
-          suggestions: ['Vänligen försök igen']
-        }
-      } as StandardError);
+      // Use return to stop execution, but the error is now handled by middleware
+      // We could potentially create a custom error type here
+      const err = new Error('Ingen bild hittades');
+      (err as any).status = 400; // Add status for error handler
+      (err as any).errorCode = 'IMAGE_MISSING';
+      return next(err); 
     }
 
-    // User limit check (keep as is)
     if (userId) {
       console.log('Checking usage limit for user:', userId);
       try {
@@ -155,19 +150,23 @@ const analyzeImage: RequestHandler = async (req, res) => {
         
         if (!userLimit.hasRemainingAnalyses) {
           console.log('User has reached usage limit:', userId);
-          return res.status(403).json({
-            error: 'USAGE_LIMIT_EXCEEDED',
-            message: 'Du har nått din månatliga gräns för analyser.',
-            details: {
-              analysesUsed: userLimit.analysesUsed,
-              analysesLimit: userLimit.analysesLimit,
-              isPremium: userLimit.isPremium
-            }
-          });
+          const err = new Error('Du har nått din månatliga gräns för analyser.');
+          (err as any).status = 403;
+          (err as any).errorCode = 'USAGE_LIMIT_EXCEEDED';
+          (err as any).details = {
+            analysesUsed: userLimit.analysesUsed,
+            analysesLimit: userLimit.analysesLimit,
+            isPremium: userLimit.isPremium
+          };
+          return next(err); // Pass error to middleware
         }
       } catch (error) {
         console.error('Error checking user limit:', error);
-        console.error('Stack trace:', error instanceof Error ? error.stack : 'No stack trace');
+        // Pass error to middleware instead of sending response
+        const err = new Error('Kunde inte verifiera användargräns.');
+        (err as any).status = 500;
+        (err as any).originalError = error;
+        return next(err); 
       }
     } else {
       console.warn('No user ID provided in analysis request');
@@ -200,11 +199,14 @@ const analyzeImage: RequestHandler = async (req, res) => {
       console.log(`Compressed image size: ${(compressedSize / 1024 / 1024).toFixed(2)}MB`);
     } catch (compressionError) {
       console.error('Error during image compression:', compressionError);
-      throw new Error('Failed to compress image'); // Simplified error
+       const err = new Error('Bildkomprimering misslyckades.');
+       (err as any).status = 500;
+       (err as any).originalError = compressionError;
+       return next(err); // Pass error to middleware
     }
 
     // Select Gemini prompt
-    const analysisPromptText = isCroppedImage ? GEMINI_CROPPED_IMAGE_PROMPT : GEMINI_ANALYSIS_PROMPT;
+    const analysisPromptText = isCroppedImage ? CROPPED_IMAGE_PROMPT : ANALYSIS_PROMPT;
     console.log('Using Gemini prompt for', isCroppedImage ? 'cropped' : 'uncropped', 'image');
 
     // --- Gemini API Call ---
@@ -231,19 +233,24 @@ const analyzeImage: RequestHandler = async (req, res) => {
     // --- Gemini Response Handling ---
     if (!result.response) {
        console.error("Gemini response was empty or undefined.");
-       throw new Error("Ett oväntat svar mottogs från Gemini.");
+       const err = new Error('Ett oväntat svar mottogs från Gemini.');
+       (err as any).status = 500;
+       return next(err); // Pass error to middleware
     }
 
     const responseContent = result.response.candidates?.[0]?.content;
     if (!responseContent || responseContent.role !== 'model' || !responseContent.parts?.[0]?.text) {
         console.error("Invalid response structure from Gemini:", JSON.stringify(result.response, null, 2));
-        // Log safety ratings if present
         if (result.response.promptFeedback?.blockReason) {
              console.error(`Gemini request blocked: ${result.response.promptFeedback.blockReason}`);
-             console.error(`Safety Ratings: ${JSON.stringify(result.response.promptFeedback.safetyRatings)}`);
-             throw new Error(`Analysen blockerades av säkerhetsskäl: ${result.response.promptFeedback.blockReason}`);
+             const err = new Error(`Analysen blockerades av säkerhetsskäl: ${result.response.promptFeedback.blockReason}`);
+             (err as any).status = 400;
+             (err as any).errorCode = 'ANALYSIS_BLOCKED'; // More specific code
+             return next(err); // Pass error to middleware
         }
-        throw new Error("Kunde inte extrahera text från Gemini-svaret.");
+        const err = new Error('Kunde inte extrahera text från Gemini-svaret.');
+        (err as any).status = 500;
+        return next(err); // Pass error to middleware
     }
 
     const geminiRawText = responseContent.parts[0].text;
@@ -257,7 +264,9 @@ const analyzeImage: RequestHandler = async (req, res) => {
       if (typeof analysisResult.isVegan === 'undefined' || 
           typeof analysisResult.confidence === 'undefined' ||
           !analysisResult.ingredientList) {
-          throw new Error("Incomplete JSON structure received from Gemini.");
+          const err = new Error('Ofullständigt JSON-svar från Gemini.');
+          (err as any).status = 500;
+          return next(err); // Pass error to middleware
       }
        // Ensure confidence is a number between 0 and 1
        analysisResult.confidence = Math.max(0, Math.min(1, Number(analysisResult.confidence) || 0));
@@ -269,7 +278,10 @@ const analyzeImage: RequestHandler = async (req, res) => {
       // Attempt to handle non-JSON response or provide a generic error
       // Maybe try a simpler prompt if this fails often?
       // For now, throw a user-friendly error.
-      throw new Error("Kunde inte tolka analysresultatet från Gemini.");
+      const err = new Error('Kunde inte tolka analysresultatet från Gemini.');
+      (err as any).status = 500;
+      (err as any).originalError = parseError;
+      return next(err); // Pass error to middleware
     }
     
     console.log('Parsed Gemini result:', analysisResult);
@@ -296,11 +308,11 @@ const analyzeImage: RequestHandler = async (req, res) => {
     if (needsBetterImage && finalVeganStatus !== false) { // Don't ask for better image if definitely non-vegan
          console.log("Requesting better image based on Gemini reasoning/confidence");
          // TODO: Create a more nuanced Quality Error based on Gemini's reasoning
-         return res.status(400).json({
-             error: 'IMAGE_QUALITY',
-             message: 'Bilden behöver vara tydligare för en säker analys.',
-             details: { suggestions: ['Försök ta en ny bild med bättre ljus.', 'Se till att hela listan är synlig.'] }
-         });
+         const err = new Error('Bilden behöver vara tydligare för en säker analys.');
+         (err as any).status = 400;
+         (err as any).errorCode = 'IMAGE_QUALITY';
+         (err as any).details = { suggestions: ['Försök ta en ny bild med bättre ljus.', 'Se till att hela listan är synlig.'] };
+         return next(err); // Pass error to middleware
     }
 
     const nonVeganIngredients = finalVeganStatus === null 
@@ -322,17 +334,18 @@ const analyzeImage: RequestHandler = async (req, res) => {
     if (userId) {
       try {
         console.log('Incrementing analysis count for user:', userId);
-        const result = await incrementAnalysisCount(userId);
-        console.log('Analysis count incremented:', result);
+        const countResult = await incrementAnalysisCount(userId);
+        console.log('Analysis count incremented:', countResult);
         
         finalResult.usageUpdated = true;
         finalResult.usageInfo = {
-          analysesUsed: result.analysesUsed,
-          analysesLimit: result.analysesLimit,
-          remaining: result.analysesLimit - result.analysesUsed
+          analysesUsed: countResult.analysesUsed,
+          analysesLimit: countResult.analysesLimit,
+          remaining: countResult.analysesLimit - countResult.analysesUsed
         };
       } catch (error) {
         console.error('Failed to increment analysis count:', error);
+        // Log error but don't fail the request just for this
       }
     }
 
@@ -340,22 +353,10 @@ const analyzeImage: RequestHandler = async (req, res) => {
     res.json(finalResult);
 
   } catch (error) {
-    console.error('Error analyzing image (Gemini):', error);
-    // TODO: Adapt getUserFriendlyError for Gemini errors (e.g., safety blocks)
-    let userMessage = 'Ett fel uppstod vid analysen.';
-    if (error instanceof Error) {
-        if (error.message.includes("blockReason")) {
-            userMessage = "Analysen kunde inte slutföras på grund av innehållsfilter.";
-        } else if (error.message.includes("tolka analysresultatet")) {
-            userMessage = "Kunde inte förstå svaret från analysmotorn. Försök igen."
-        } else {
-             userMessage = error.message; // Use specific error if available
-        }
-    }
-     res.status(400).json({ 
-         error: 'ANALYSIS_ERROR', 
-         message: userMessage 
-     });
+    // --- Outer Catch Block --- 
+    console.error('Error analyzing image (Gemini) - Outer catch:', error);
+    // Pass any unexpected errors to the middleware
+    next(error); 
   }
 };
 
@@ -440,6 +441,30 @@ app.get('/test-counter/:userId', async (req, res) => {
       message: error instanceof Error ? error.message : 'Unknown error'
     });
   }
+});
+
+// --- ERROR HANDLING MIDDLEWARE --- 
+// This MUST be defined AFTER all other app.use() and routes
+// Prefix unused parameters with underscore to satisfy linter
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error("--- Error Handling Middleware Caught Error ---");
+  console.error(err.message);
+  if (err.originalError) {
+    console.error("Original Error:", err.originalError);
+  }
+  console.error(err.stack);
+  console.error("--- End Error --- ");
+
+  const status = err.status || 500;
+  const errorCode = err.errorCode || (status === 403 ? 'FORBIDDEN' : 'SERVER_ERROR'); // Default error code
+  const message = err.message || 'Ett oväntat serverfel uppstod.';
+  const details = err.details || undefined;
+
+  res.status(status).json({
+    error: errorCode,
+    message: message,
+    details: details
+  } as StandardError);
 });
 
 const PORT_STR = process.env.PORT || '8080';
