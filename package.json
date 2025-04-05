@@ -9,7 +9,7 @@
     "@": "src"
   },
   "scripts": {
-    "start": "node -r tsconfig-paths/register dist/server.js",
+    "start": "node dist/server.js",
     "dev": "set NODE_ENV=development && ts-node-dev -r tsconfig-paths/register src/server.ts",
     "build": "tsc && cp -r src/config dist/ && tsc-alias",
     "postinstall": "npm run build",
