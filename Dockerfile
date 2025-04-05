@@ -37,11 +37,15 @@ EXPOSE 8080
 ENV NODE_ENV=production
 ENV PORT=8080
 
-# Explicitly set the entrypoint to node
-ENTRYPOINT ["node"]
+# --- TEMPORARY DEBUG ENTRYPOINT --- 
+# Keep the container running indefinitely for SSH access
+ENTRYPOINT ["sleep", "infinity"]
 
-# CMD now provides only the arguments to the entrypoint (node)
-CMD ["dist/server.js"]
+# Original ENTRYPOINT (commented out)
+# ENTRYPOINT ["node"]
+
+# Original CMD (commented out)
+# CMD ["dist/server.js"]
 
 # --- Debug CMDs (commented out) ---
 # CMD ["echo", "--- Simple echo test: SUCCESS ---"]
