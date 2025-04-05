@@ -30,6 +30,10 @@ COPY --from=builder /app/node_modules ./node_modules
 # Copy the built application code (dist folder) from the builder stage
 COPY --from=builder /app/dist ./dist
 
+# --- Explicitly copy data files --- 
+# Ensure CSV files are copied to the correct location in the final image
+COPY src/data/*.csv ./dist/data/
+
 # Make port 8080 available
 EXPOSE 8080
 
@@ -37,17 +41,12 @@ EXPOSE 8080
 ENV NODE_ENV=production
 ENV PORT=8080
 
-# --- TEMPORARY DEBUG ENTRYPOINT --- 
-# Keep the container running indefinitely for SSH access
-ENTRYPOINT ["sleep", "infinity"]
+# --- Restore original ENTRYPOINT and CMD --- 
+ENTRYPOINT ["node"]
+CMD ["dist/server.js"]
 
-# Original ENTRYPOINT (commented out)
-# ENTRYPOINT ["node"]
-
-# Original CMD (commented out)
-# CMD ["dist/server.js"]
-
-# --- Debug CMDs (commented out) ---
+# --- Debug Entrypoints/CMDs (commented out) ---
+# ENTRYPOINT ["sleep", "infinity"]
 # CMD ["echo", "--- Simple echo test: SUCCESS ---"]
 # CMD ["node", "-e", "console.log('--- Node.js execution test: SUCCESS ---');"]
 # CMD ["ls", "-la", "/app/dist"] 
