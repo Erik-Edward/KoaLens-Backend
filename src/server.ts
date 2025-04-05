@@ -2,10 +2,13 @@
 console.log("--- Server.ts script starting ---"); 
 
 // Restore module-alias for runtime path mapping
-import 'module-alias/register'; 
+// import 'module-alias/register'; 
 
 import express from 'express';
 import cors from 'cors';
+import winston from 'winston';
+import path from 'path'; // Add path import
+import moduleAlias from 'module-alias'; // Add module-alias import
 // Remove Anthropic import
 // import { Anthropic } from '@anthropic-ai/sdk'; 
 import dotenv from 'dotenv';
@@ -477,3 +480,12 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT} and host 0.0.0.0`);
   console.log(`Analysis API (Gemini) available at http://localhost:${PORT}/analyze`); // Updated log
 });
+
+// Explicitly register the alias
+const baseDir = __dirname; // In container, this will be /app/dist
+moduleAlias.addAliases({
+  '@': baseDir,
+});
+
+// Updated console log
+console.log(`--- Server.ts script starting --- Alias @ explicitly registered to: ${baseDir}`);
