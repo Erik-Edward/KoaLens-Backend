@@ -70,6 +70,7 @@ export function loadNonVeganIngredients(): IngredientData[] {
   try {
     // Use __dirname to construct path relative to the compiled file location
     const filePath = path.join(__dirname, '..', 'data', 'non-vegan.csv');
+    logger.info(`[Utils] Attempting to load: ${filePath}`);
     const content = fs.readFileSync(filePath, 'utf8');
     
     const rows = content.split('\n').filter(row => row.trim() && !row.startsWith('"name,e_number'));
@@ -113,6 +114,7 @@ export function loadUncertainIngredients(): IngredientData[] {
   try {
     // Use __dirname to construct path relative to the compiled file location
     const filePath = path.join(__dirname, '..', 'data', 'uncertain.csv');
+    logger.info(`[Utils] Attempting to load: ${filePath}`);
     const content = fs.readFileSync(filePath, 'utf8');
     
     // Split into lines and skip the header row (first line)
@@ -169,6 +171,7 @@ export function loadVeganIngredients(): IngredientData[] {
   try {
     // Use __dirname to construct path relative to the compiled file location
     const filePath = path.join(__dirname, '..', 'data', 'vegan - vegan.csv'); // Ensure correct filename
+    logger.info(`[Utils] Attempting to load: ${filePath}`);
     const content = fs.readFileSync(filePath, 'utf8');
     
     const rows = content.split('\n').filter(row => row.trim() && !row.startsWith('"name,e_number'));

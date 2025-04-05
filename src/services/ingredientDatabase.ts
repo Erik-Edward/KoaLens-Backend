@@ -1,46 +1,10 @@
 // C:\Projects\koalens-backend\src\services\ingredientDatabase.ts
-import path from 'path';
-import fs from 'fs';
-
-interface IngredientInfo {
-  name: string;
-  e_number?: string;
-  description?: string;
-}
+// Import the necessary function from utils
+import { checkIngredientStatus as checkStatusFromUtils } from '../utils/ingredientsDatabase'; 
 
 class IngredientDatabase {
-  private nonVeganIngredients: Map<string, IngredientInfo> = new Map();
-  private uncertainIngredients: Map<string, IngredientInfo> = new Map();
-
   constructor() {
-    this.loadDatabaseSync('non-vegan.csv', this.nonVeganIngredients);
-    this.loadDatabaseSync('uncertain.csv', this.uncertainIngredients);
-  }
-
-  private loadDatabaseSync(filename: string, targetMap: Map<string, IngredientInfo>) {
-    const filePath = path.join('/workspace', 'dist', 'data', filename);
-    try {
-      const content = fs.readFileSync(filePath, 'utf8');
-      const rows = content.split('\n').filter(row => row.trim());
-      const header = rows[0]?.toLowerCase().includes('name');
-      const dataRows = header ? rows.slice(1) : rows;
-
-      for (const row of dataRows) {
-        const fields = row.split(',').map(field => field.replace(/^"|"$/g, '').trim());
-        if (fields.length > 0 && fields[0]) {
-          targetMap.set(fields[0].toLowerCase(), {
-            name: fields[0],
-            e_number: fields[1] || undefined,
-            description: fields[2] || undefined
-          });
-        } else {
-          console.warn(`Skipping invalid row in ${filename}:`, row);
-        }
-      }
-      console.log(`Successfully loaded ${targetMap.size} entries from ${filename} synchronously.`);
-    } catch (error) {
-      console.error(`Error loading ${filename} synchronously:`, error);
-    }
+    console.log("[Service] IngredientDatabase initialized. Relies on utils/ingredientsDatabase for data.");
   }
 
   public checkIngredient(ingredient: string): {
@@ -56,33 +20,38 @@ class IngredientDatabase {
       };
     }
 
-    const normalizedIngredient = ingredient.toLowerCase().trim();
-    
-    // Kolla i non-vegan databasen
-    const nonVegan = this.nonVeganIngredients.get(normalizedIngredient);
-    if (nonVegan) {
+    // Delegate the check to the function in utils
+    const statusResult = checkStatusFromUtils(ingredient);
+
+    // Adapt the result from checkStatusFromUtils to the expected return type
+    if (statusResult.isVegan === false) {
+      // Non-vegan
       return {
         isVegan: false,
-        confidence: 1.0,
-        description: nonVegan.description
+        confidence: 1.0, // High confidence for known non-vegan
+        description: statusResult.reason || statusResult.matchedItem?.description
       };
-    }
-
-    // Kolla i uncertain databasen
-    const uncertain = this.uncertainIngredients.get(normalizedIngredient);
-    if (uncertain) {
+    } else if (statusResult.isUncertain) {
+      // Uncertain
       return {
-        isVegan: false,
-        confidence: 0.5,
-        description: uncertain.description
+        isVegan: false, // Treat uncertain as non-vegan for now?
+        confidence: 0.5, // Low confidence
+        description: statusResult.reason || statusResult.matchedItem?.description
+      };
+    } else if (statusResult.isVegan === true) {
+      // Known vegan
+      return {
+        isVegan: true,
+        confidence: 1.0, // High confidence for known vegan
+        description: statusResult.reason || statusResult.matchedItem?.description
+      };
+    } else {
+      // Unknown - default assumption (as per original logic)
+      return {
+        isVegan: true,
+        confidence: 0.8
       };
     }
-
-    // Om ingrediensen inte finns i någon databas, anta att den är vegansk
-    return {
-      isVegan: true,
-      confidence: 0.8
-    };
   }
 }
 

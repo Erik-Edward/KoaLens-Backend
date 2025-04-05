@@ -12,17 +12,30 @@ primary_region = 'arn'
   NODE_ENV = 'production'
   PORT = '8080'
 
-[http_service]
+[processes]
+  app = "npm start"
+
+[[services]]
+  processes = ["app"]
+  protocol = "tcp"
   internal_port = 8080
-  force_https = true
-  auto_stop_machines = 'off'
+  auto_stop_machines = false
   auto_start_machines = true
   min_machines_running = 1
 
-  [http_service.concurrency]
+  [services.concurrency]
     type = 'connections'
     hard_limit = 25
     soft_limit = 20
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
 
 [[vm]]
   memory = '1gb'
