@@ -17,11 +17,21 @@ COPY . .
 # Build the TypeScript project
 RUN npm run build
 
+# Explicitly copy config files after build
+RUN mkdir -p /app/dist/config
+# Copy ai-config.js to both the original name and without extension to match imports
+RUN cp src/config/ai-config.js /app/dist/config/ai-config
+RUN cp src/config/ai-config.js /app/dist/config/ai-config.js
+RUN cp src/config/ai-config.d.ts /app/dist/config/ai-config.d.ts
+
 # Remove development dependencies
 RUN npm prune --omit=dev
 
 # Final stage
 FROM node:20-slim
+
+# Install ffmpeg
+RUN apt-get update && apt-get install -y ffmpeg && apt-get clean
 
 # Set the working directory in the container
 WORKDIR /app
@@ -37,8 +47,4 @@ EXPOSE 8080
 
 # Define the command to run the application
 ENTRYPOINT ["node"]
-CMD ["dist/server.js"]
-
-# For debugging: Keep the container running indefinitely
-# ENTRYPOINT ["sleep", "infinity"]
-# CMD [] 
+CMD ["dist/server.js"] 
