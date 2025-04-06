@@ -1,59 +1,44 @@
-# Stage 1: Builder
+# Use an official Node.js runtime as a parent image
+# Builder stage
 FROM node:20-slim AS builder
 
+# Set the working directory in the container
 WORKDIR /app
 
-# Copy package files
+# Copy package.json and package-lock.json (or yarn.lock) files
 COPY package*.json ./
 
-# Install ALL dependencies (including devDependencies for build)
+# Install dependencies using npm ci for reproducible builds
 RUN npm ci
 
-# Copy the rest of the application source code
+# Copy the rest of the application code
 COPY . .
 
-# Run the build script (tsc, copy assets, tsc-alias)
+# Build the TypeScript project
 RUN npm run build
 
-# Prune devDependencies after build (Optional but good practice)
+# Remove development dependencies
 RUN npm prune --omit=dev
 
-# Stage 2: Final Production Image
+# Final stage
 FROM node:20-slim
 
+# Set the working directory in the container
 WORKDIR /app
 
-# Copy package.json and pruned node_modules from the builder stage
+# Copy built artifacts and necessary files from the builder stage
 COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/node_modules ./node_modules
-
-# Copy the built application code (dist folder) from the builder stage
 COPY --from=builder /app/dist ./dist
-
-# --- Explicitly copy data files --- 
-# Ensure CSV files are copied to the correct location in the final image
 COPY src/data/*.csv ./dist/data/
 
-# Make port 8080 available
+# Expose the port the app runs on
 EXPOSE 8080
 
-# Define environment variables
-ENV NODE_ENV=production
-ENV PORT=8080
+# Define the command to run the application
+# ENTRYPOINT ["node"]
+# CMD ["dist/server.js"]
 
-# Set a non-root user (optional but good practice)
-# USER node
-
-# --- Debug Entrypoint (Comment out for normal execution) ---
-# ENTRYPOINT ["sleep", "infinity"]
+# For debugging: Keep the container running indefinitely
+ENTRYPOINT ["sleep", "infinity"]
 # CMD [] 
-
-# --- Original Entrypoint (Uncomment for normal execution) ---
-ENTRYPOINT ["node"]
-CMD ["dist/server.js"]
-
-# --- Debug Entrypoints/CMDs (commented out) ---
-# ENTRYPOINT ["sleep", "infinity"]
-# CMD ["echo", "--- Simple echo test: SUCCESS ---"]
-# CMD ["node", "-e", "console.log('--- Node.js execution test: SUCCESS ---');"]
-# CMD ["ls", "-la", "/app/dist"] 

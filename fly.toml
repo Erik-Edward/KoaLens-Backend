@@ -1,6 +1,7 @@
 # fly.toml app configuration file
 app = 'koalens-backend'
 primary_region = 'arn'
+console_command = '/bin/sh'
 
 # [build]
 #  builder = "heroku/builder:24"
@@ -17,24 +18,24 @@ primary_region = 'arn'
 #  app = "node dist/server.js"
 
 # Restore the services section
-[[services]]
-  protocol = "tcp"
-  internal_port = 8080
-  processes = ["app"]
-  auto_stop_machines = false # Keep the machine running even if idle
-  auto_start_machines = true # Start the machine automatically on requests
-  min_machines_running = 1 # Ensure at least one machine is always running
-  [services.concurrency]
-    type = "connections"
-    hard_limit = 25
-    soft_limit = 20
-  [[services.ports]]
-    port = 80
-    handlers = ["http"]
-    force_https = true
-  [[services.ports]]
-    port = 443
-    handlers = ["tls", "http"]
+# [[services]]
+#   protocol = "tcp"
+#   internal_port = 8080
+#   processes = ["app"]
+#   auto_stop_machines = false # Keep the machine running even if idle
+#   auto_start_machines = true # Start the machine automatically on requests
+#   min_machines_running = 1 # Ensure at least one machine is always running
+#   [services.concurrency]
+#     type = "connections"
+#     hard_limit = 25
+#     soft_limit = 20
+#   [[services.ports]]
+#     port = 80
+#     handlers = ["http"]
+#     force_https = true
+#   [[services.ports]]
+#     port = 443
+#     handlers = ["tls", "http"]
 
 [[vm]]
   memory = '1gb'
