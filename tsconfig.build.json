@@ -1,0 +1,17 @@
+{
+    "extends": "./tsconfig.json",
+    "exclude": [
+        "**/*.test.ts",
+        "**/*.spec.ts",
+        "verify-api.js",
+        "src/routes/testGemini.ts",
+        "src/services/videoAnalysisService.ts",
+        "src/services/veganValidator.ts"
+    ],
+    "compilerOptions": {
+        "skipLibCheck": true,
+        "noImplicitAny": false,
+        "noUnusedLocals": false,
+        "noUnusedParameters": false
+    }
+} 

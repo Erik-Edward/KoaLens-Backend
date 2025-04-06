@@ -1,36 +1,40 @@
 // src/routes/index.ts
-import express, { Request, Response } from 'express';
-import counterRoutes from './counterRoutes';
-import testGeminiRoutes from './testGemini';
+import { Router } from 'express';
 import analyzeRoutes from './analyzeRoutes';
 import aiRoutes from './aiRoutes';
-import videoAnalysisRoutes from './videoAnalysis';
+import counterRoutes from './counterRoutes';
 import reportRoutes from './reportRoutes';
+import videoAnalysisRoutes from './videoAnalysis';
+import testGeminiRoutes from './testGemini';
+import { logger } from '../utils/logger';
 
-const router = express.Router();
+// Create a router instance
+const router = Router();
 
-// Register counter-routes under /api/counters
-router.use('/counters', counterRoutes);
+// Basic healthcheck endpoint
+router.get('/', (_req, res) => {
+  res.json({
+    status: 'ok',
+    message: 'KoaLens API is running',
+    environment: process.env.NODE_ENV || 'development',
+    timestamp: new Date().toISOString()
+  });
+});
 
-// Register analysis routes
+// Mount the routes
 router.use('/analyze', analyzeRoutes);
-
-// Register AI routes - includes both test routes and compatibility routes
 router.use('/ai', aiRoutes);
-router.use('/ai', testGeminiRoutes);
-
-// Register video analysis routes
+router.use('/counter', counterRoutes);
+router.use('/reports', reportRoutes);
 router.use('/video', videoAnalysisRoutes);
 
-// Register report routes
-router.use('/report', reportRoutes);
-
-// Add other routes here as needed
-// e.g. router.use('/products', productRoutes);
-
-// Health check
-router.get('/health', (_req: Request, res: Response) => {
-  res.status(200).json({ status: 'OK', message: 'API is running' });
-});
+// Mount diagnostic and test routes
+// Not mounted in production by default for security
+if (process.env.NODE_ENV !== 'production' || process.env.ENABLE_TEST_ROUTES === 'true') {
+  logger.info('Mounting test routes - accessible in non-production or with ENABLE_TEST_ROUTES=true');
+  router.use('/test', testGeminiRoutes);
+} else {
+  logger.info('Test routes not mounted in production. Set ENABLE_TEST_ROUTES=true to enable.');
+}
 
 export default router;

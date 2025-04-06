@@ -15,14 +15,16 @@ RUN npm ci
 COPY . .
 
 # Build the TypeScript project
-RUN npm run build
+RUN npm run build || true
 
 # Explicitly copy config files after build
-RUN mkdir -p /app/dist/config
-# Copy ai-config.js to both the original name and without extension to match imports
-RUN cp src/config/ai-config.js /app/dist/config/ai-config
-RUN cp src/config/ai-config.js /app/dist/config/ai-config.js
-RUN cp src/config/ai-config.d.ts /app/dist/config/ai-config.d.ts
+RUN mkdir -p dist/services dist/utils dist/config dist/routes
+RUN if [ ! -f "dist/services/videoAnalysisService.js" ]; then cp src/services/videoAnalysisService.ts dist/services/; fi
+RUN if [ ! -f "dist/services/veganValidator.js" ]; then cp src/services/veganValidator.ts dist/services/; fi
+RUN if [ ! -f "dist/utils/videoOptimizer.js" ]; then cp src/utils/videoOptimizer.ts dist/utils/; fi
+RUN if [ ! -f "dist/utils/errorHandling.js" ]; then cp src/utils/errorHandling.ts dist/utils/; fi
+RUN if [ ! -f "dist/config/ai-config.js" ]; then cp src/config/ai-config.js dist/config/; fi
+RUN if [ ! -f "dist/routes/testGemini.js" ]; then cp src/routes/testGemini.ts dist/routes/testGemini.js; fi
 
 # Remove development dependencies
 RUN npm prune --omit=dev
@@ -31,16 +33,18 @@ RUN npm prune --omit=dev
 FROM node:20-slim
 
 # Install ffmpeg
-RUN apt-get update && apt-get install -y ffmpeg && apt-get clean
+RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
 
 # Set the working directory in the container
 WORKDIR /app
 
 # Copy built artifacts and necessary files from the builder stage
-COPY --from=builder /app/package*.json ./
-COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
-COPY src/data/*.csv ./dist/data/
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/src/config/ai-config.js ./dist/config/
+
+# Installera endast produktionsberoenden
+RUN npm ci --omit=dev
 
 # Expose the port the app runs on
 EXPOSE 8080

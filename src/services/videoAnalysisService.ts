@@ -1,13 +1,13 @@
 import * as fs from 'fs';
-import * as path from 'path';
 import * as os from 'os';
-import { v4 as uuidv4 } from 'uuid';
-import { logger } from '../utils/logger';
+import * as path from 'path';
 import { VideoOptimizer } from '../utils/videoOptimizer';
-import geminiService from './geminiService';
+import geminiService from '../services/geminiService';
+import { logger } from '../utils/logger';
+import { v4 as uuidv4 } from 'uuid';
+import { formatErrorMessage } from '../utils/errorHandling';
 import {
   logVideoAnalysisRequest,
-  logVideoAnalysisResponse,
   logIngredientCorrection
 } from '../utils/videoLogger';
 import { checkIngredientStatus } from '../utils/ingredientsDatabase';
@@ -16,7 +16,6 @@ import { z } from 'zod';
 // Import necessary types from @google/generative-ai
 import { 
   FunctionDeclaration, 
-  GenerateContentResult, 
   FunctionDeclarationsTool,
   SchemaType
 } from '@google/generative-ai';
@@ -25,17 +24,19 @@ import {
 interface IngredientAnalysisResult {
   name: string;
   isVegan: boolean;
+  isUncertain?: boolean;
   confidence: number;
-  isUncertain?: boolean; // Markerar om ingrediensen är osäker (kan vara vegansk eller ej)
 }
 
-interface VideoAnalysisResult {
+export interface VideoAnalysisResult {
   ingredients: IngredientAnalysisResult[];
   isVegan: boolean;
-  isUncertain?: boolean; // Ny status för osäkra produkter
+  isUncertain?: boolean;
   confidence: number;
-  reasoning?: string; // Explanation for vegan classification
-  uncertainReasons?: string[]; // Anledningar till osäker status
+  reasoning?: string;
+  uncertainReasons?: string[];
+  videoProcessed?: boolean;
+  preferredLanguage?: string;
 }
 
 // -- Start: Define Zod Schema --
@@ -52,60 +53,7 @@ const ingredientAnalysisArgsSchema = z.object({
 });
 // -- End: Define Zod Schema --
 
-// -- Start: Define Function Declaration and Argument Type --
-const recordIngredientAnalysisFunctionDeclaration: FunctionDeclaration = {
-  name: "recordIngredientAnalysis",
-  description: "Records the analysis of an ingredient list, classifying the overall product and each individual ingredient regarding its vegan status, including original and translated names.",
-  parameters: {
-    type: SchemaType.OBJECT,
-    properties: {
-      product_status: {
-        type: SchemaType.STRING,
-        description: "Overall status of the product based on the ingredient analysis.",
-        enum: ["sannolikt vegansk", "sannolikt icke-vegansk", "oklart"],
-        format: 'enum'
-      },
-      overall_confidence: {
-        type: SchemaType.NUMBER,
-        description: "Overall confidence score (0.0 to 1.0) for the product status assessment.",
-      },
-      ingredients: {
-        type: SchemaType.ARRAY,
-        description: "An array containing the analysis for each identified ingredient.",
-        items: {
-          type: SchemaType.OBJECT,
-          properties: {
-            name: {
-              type: SchemaType.STRING,
-              description: "The original name of the ingredient as found on the packaging.",
-            },
-            translated_name: {
-              type: SchemaType.STRING,
-              description: "The name of the ingredient translated to the requested language.",
-            },
-            status: {
-              type: SchemaType.STRING,
-              description: "Classification of the ingredient.",
-              enum: ["vegansk", "icke-vegansk", "osäker"],
-              format: 'enum'
-            },
-            reasoning: {
-              type: SchemaType.STRING,
-              description: "Brief explanation for why the ingredient received its status, especially if 'icke-vegansk' or 'osäker'.",
-            },
-            confidence: {
-              type: SchemaType.NUMBER,
-              description: "Confidence score (0.0 to 1.0) for the classification.",
-            },
-          },
-          required: ["name", "translated_name", "status", "reasoning", "confidence"],
-        },
-      },
-    },
-    required: ["product_status", "overall_confidence", "ingredients"],
-  },
-};
-
+// Definiera IngredientAnalysisArgs igen eftersom den behövs i koden
 type IngredientAnalysisArgs = {
   product_status: "sannolikt vegansk" | "sannolikt icke-vegansk" | "oklart";
   overall_confidence: number;
@@ -117,7 +65,6 @@ type IngredientAnalysisArgs = {
     confidence: number;
   }[];
 };
-// -- End: Define Function Declaration and Argument Type --
 
 /**
  * Service class to handle video analysis using Gemini
@@ -138,9 +85,20 @@ export class VideoAnalysisService {
     
     this.videoOptimizer = new VideoOptimizer();
     
+    let ffmpegInstalled = false;
+    try {
+      // Safely check if method exists and call it
+      if (typeof this.videoOptimizer.isFfmpegInstalled === 'function') {
+        ffmpegInstalled = this.videoOptimizer.isFfmpegInstalled();
+      }
+    } catch (error) {
+      logger.warn('Error checking ffmpeg installation', { error: formatErrorMessage(error) });
+    }
+    
     logger.info('VideoAnalysisService initialized', { 
       tempDir: this.tempDir, 
-      maxVideoSizeBytes: this.maxVideoSizeBytes
+      maxVideoSizeBytes: this.maxVideoSizeBytes,
+      ffmpegInstalled
     });
   }
   
@@ -156,7 +114,14 @@ export class VideoAnalysisService {
     mimeType: string,
     preferredLanguage: string = 'en'
   ): Promise<VideoAnalysisResult> {
-    // Log the analysis request
+    logger.info('Video analysis request received', {
+      dataSize: base64Data.length,
+      mimeType,
+      preferredLanguage,
+      hasApiKey: !!process.env.GEMINI_API_KEY,
+      model: process.env.GEMINI_MODEL || 'gemini-1.5-pro-latest'
+    });
+    
     logVideoAnalysisRequest({
       mimeType,
       preferredLanguage,
@@ -169,7 +134,14 @@ export class VideoAnalysisService {
     try {
       // Validate video data
       if (!base64Data || !mimeType.startsWith('video/')) {
+        logger.error('Invalid video data or MIME type', { mimeType });
         throw new Error('Invalid video data or MIME type');
+      }
+      
+      // Check API key availability
+      if (!process.env.GEMINI_API_KEY) {
+        logger.error('Missing GEMINI_API_KEY environment variable');
+        throw new Error('Gemini API key is not configured. Video analysis is unavailable.');
       }
       
       // Check video size
@@ -195,196 +167,183 @@ export class VideoAnalysisService {
       // Optimize video if possible
       optimizedVideoPath = tempVideoPath;
       try {
+        logger.debug('Starting video optimization');
         optimizedVideoPath = await this.videoOptimizer.optimize(
           tempVideoPath, 
           path.join(this.tempDir, `${videoId}-optimized.mp4`)
         );
-        logger.debug('Video optimized', { 
-          originalPath: tempVideoPath, 
-          optimizedPath: optimizedVideoPath,
-          originalSizeBytes: fs.statSync(tempVideoPath).size,
-          optimizedSizeBytes: fs.statSync(optimizedVideoPath).size
+        logger.debug('Video optimization completed', { 
+          optimizedVideoPath,
+          originalPath: tempVideoPath 
         });
-      } catch (error) {
-        logger.warn('Failed to optimize video, proceeding with original', { error });
+      } catch (error: any) {
+        logger.error('Video optimization failed, will use original video', { 
+          error: error.message 
+        });
         // Continue with original video
       }
       
-      // Read the video file for analysis
-      const videoBuffer = fs.readFileSync(optimizedVideoPath);
-      const videoBase64 = videoBuffer.toString('base64');
+      // Read the video file
+      const optimizedBuffer = fs.readFileSync(optimizedVideoPath);
+      const optimizedBase64 = optimizedBuffer.toString('base64');
       
-      // Build prompt for Gemini
+      logger.debug('Analysis metadata', {
+        originalVideoFileSize: base64Data.length,
+        tempVideoFileSize: fs.existsSync(tempVideoPath) ? fs.statSync(tempVideoPath).size : 0,
+        optimizedVideoFileSize: fs.existsSync(optimizedVideoPath) ? fs.statSync(optimizedVideoPath).size : 0,
+        originalMimeType: mimeType,
+        tempFilePath: tempVideoPath,
+        optimizedFilePath: optimizedVideoPath,
+        optimizedFileCreated: !!optimizedVideoPath && optimizedVideoPath !== tempVideoPath && fs.existsSync(optimizedVideoPath),
+        apiKeyConfigured: !!process.env.GEMINI_API_KEY,
+        ffmpegInstalled: this.videoOptimizer.isFfmpegInstalled?.() || false
+      });
+      
+      // Create a prompt for AI video analysis
       const prompt = this.buildAnalysisPrompt(preferredLanguage);
       
-      // Define the tools to be passed to the Gemini API
-      const tools: FunctionDeclarationsTool[] = [
-        { functionDeclarations: [recordIngredientAnalysisFunctionDeclaration] }
-      ];
-
-      // Send to Gemini for analysis
-      logger.info('Sending video for AI analysis', { 
-        videoSizeKB: Math.round(videoBuffer.length / 1024),
-        promptLength: prompt.length
-      });
-      
-      let mappedResult: IngredientAnalysisArgs | null = null;
-      let preliminaryResult: VideoAnalysisResult | null = null;
-      let attemptCount = 0;
-      const maxAttempts = 2;
+      // Replace the functionDeclarations creation code with a call to the new method
+      const functionDeclarations = this.createFunctionDeclarations();
       
       try {
-        // First Attempt
-        attemptCount++;
-        logger.info('Attempting video analysis with function calling', { attempt: attemptCount });
-        const aiResult: GenerateContentResult = await geminiService.generateContentFromVideo(
-          prompt, videoBase64, 'video/mp4', tools
-        );
-        const response = aiResult.response;
-        const functionCalls = response.functionCalls();
-
-        if (functionCalls && functionCalls.length > 0) {
-          const analysisCall = functionCalls.find(fc => fc.name === 'recordIngredientAnalysis');
-          if (analysisCall) {
-            logger.info('Received function call from Gemini', { functionName: analysisCall.name });
-            // Store raw args for potential validation
-            mappedResult = analysisCall.args as IngredientAnalysisArgs; 
-            
-            // --- BEGIN DEBUG LOGGING --- 
-            // Log the raw arguments received directly from the function call
-            logger.debug('[AnalyzeVideo] Raw function call arguments received:', { 
-              args: JSON.stringify(mappedResult) // Stringify for easier viewing of the whole object
-            });
-            // --- END DEBUG LOGGING --- 
-            
-          } else {
-            logger.warn('Received function call, but not the expected one', {
-              receivedCalls: functionCalls.map(fc => fc.name)
-            });
-          }
-        }
-
-        // Fallback to text parsing if no function call
-        if (mappedResult === null) {
-          logger.info('No function call received, falling back to text parsing');
-          const textResponse = response.text();
-          if (!textResponse) {
-            throw new Error('AI response missing text content and no function call found.');
-          }
-          // Parse text to preliminary result
-          preliminaryResult = this.parseAnalysisResult(textResponse); 
-        }
-
-      } catch (error: any) {
-        logger.warn('First video analysis attempt failed', { 
-          error: error.message,
-          attempt: attemptCount
+        // Generate content with Gemini using FunctionCalling
+        logger.debug('Calling Gemini API for video analysis', { 
+          promptLength: prompt.length,
+          videoSize: optimizedBase64.length,
+          functionCallingEnabled: true 
         });
         
-        // Retry Logic
-        if (attemptCount < maxAttempts) {
-          logger.info('Retrying video analysis with simplified prompt and function calling', { attempt: attemptCount + 1 });
-          attemptCount++;
-          const simplifiedPrompt = this.buildSimplifiedRetryPrompt();
+        const result = await geminiService.generateContentFromVideo(
+          prompt,
+          optimizedBase64,
+          mimeType,
+          functionDeclarations
+        );
+        
+        const response = result.response;
+        const { functionCalls, firstFunctionCall, functionCallName } = this.safetyCheckFunctionCalls(response);
+        
+        if (!functionCalls || functionCalls.length === 0) {
+          logger.warn('No function calls detected in Gemini response, falling back to simplified approach');
           
-          const aiResultRetry: GenerateContentResult = await geminiService.generateContentFromVideo(
-            simplifiedPrompt, videoBase64, 'video/mp4', tools
-          );
-          const responseRetry = aiResultRetry.response;
-          const functionCallsRetry = responseRetry.functionCalls();
-
-          if (functionCallsRetry && functionCallsRetry.length > 0) {
-            const analysisCallRetry = functionCallsRetry.find(fc => fc.name === 'recordIngredientAnalysis');
-            if (analysisCallRetry) {
-              logger.info('Received function call from Gemini on retry', { functionName: analysisCallRetry.name });
-              mappedResult = analysisCallRetry.args as IngredientAnalysisArgs; // Store raw args
-            } else {
-               logger.warn('Received function call on retry, but not the expected one', {
-                 receivedCalls: functionCallsRetry.map(fc => fc.name)
-               });
-            }
-          }
-
-          // Fallback to text parsing on retry
-          if (mappedResult === null) {
-            logger.info('No function call received on retry, falling back to text parsing');
-            const textResponseRetry = responseRetry.text();
-            if (!textResponseRetry) {
-              throw new Error('AI retry response missing text content and no function call found.');
-            }
-            preliminaryResult = this.parseAnalysisResult(textResponseRetry);
-          }
-
-        } else {
-          logger.error('All video analysis attempts failed.');
-          throw error; // Re-throw if all attempts failed
-        }
-      }
-      
-      // --- Start: Processing and final validation --- 
-      // Convert function call args to preliminary result if we have them
-      if (mappedResult) {
-        try {
-          ingredientAnalysisArgsSchema.parse(mappedResult);
-          logger.info('Function call arguments successfully validated against Zod schema.');
-          // Map the validated args to a preliminary result structure
-          preliminaryResult = this.mapFunctionArgsToPreliminaryResult(mappedResult);
-        } catch (zodError: any) {
-          logger.error('Zod validation failed for function call arguments', { 
-            error: zodError.errors,
-            args: mappedResult 
+          // Fallback to text-based response
+          const rawText = response.text();
+          logger.debug('Falling back to text-based parsing', { 
+            textResponseLength: rawText.length 
           });
-          throw new Error('AI response via function call failed schema validation.');
+          
+          // Parse the raw text with regex
+          const preliminaryResult = this.parseAnalysisResult(rawText);
+          
+          // Enhance the result with database checks
+          return this.enhanceAnalysisResult(preliminaryResult);
         }
+        
+        // Process the function call
+        const functionCall = firstFunctionCall; // Get the first function call
+        
+        // Safety check - ensure functionCall exists
+        if (!functionCall) {
+          logger.warn('Function calls array exists but first element is undefined');
+          // Fallback to text-based response
+          const rawText = response.text();
+          const preliminaryResult = this.parseAnalysisResult(rawText);
+          return this.enhanceAnalysisResult(preliminaryResult);
+        }
+        
+        // Validate that it's the expected function
+        if (functionCall.name !== 'recordIngredientAnalysis') {
+          logger.warn('Unexpected function call name', { 
+            expectedFunction: 'recordIngredientAnalysis',
+            actualFunction: functionCall.name 
+          });
+          throw new Error('Unexpected function call in AI response');
+        }
+        
+        try {
+          // Parse the function arguments - handle as unknown first
+          const argsString = typeof functionCall.args === 'string' 
+            ? functionCall.args 
+            : JSON.stringify(functionCall.args);
+            
+          const args = JSON.parse(argsString) as unknown;
+          
+          // Validate with Zod schema
+          const validatedArgs = ingredientAnalysisArgsSchema.parse(args);
+          
+          // Convert from function call format to our internal format
+          const preliminaryResult = this.mapFunctionArgsToPreliminaryResult(validatedArgs);
+          
+          // Enhance the result with database checks
+          return this.enhanceAnalysisResult(preliminaryResult);
+        } catch (parseError: any) {
+          logger.error('Error parsing function call arguments', { 
+            error: parseError.message,
+            args: functionCall.args
+          });
+          
+          // Fallback to text-based response if available
+          if (response.text) {
+            const rawText = response.text();
+            const preliminaryResult = this.parseAnalysisResult(rawText);
+            return this.enhanceAnalysisResult(preliminaryResult);
+          }
+          
+          throw new Error('Failed to parse ingredient analysis result: ' + parseError.message);
+        }
+      } catch (aiError: any) {
+        // If the error is related to video format, try a simpler approach
+        logger.error('Error in primary video analysis approach', { 
+          error: aiError.message
+        });
+        
+        // Try fallback with simpler prompt if it's a specific type of error
+        if (aiError.message.includes('too large') || 
+            aiError.message.includes('unsupported') ||
+            aiError.message.includes('model does not support')) {
+          
+          logger.info('Attempting simplified fallback approach');
+          
+          // Try to generate a simple analysis without function calling
+          const fallbackPrompt = this.buildSimplifiedRetryPrompt();
+          
+          try {
+            const fallbackResult = await geminiService.generateContentFromMedia(
+              fallbackPrompt, 
+              optimizedBase64, 
+              mimeType
+            );
+            
+            const preliminaryResult = this.parseAnalysisResult(fallbackResult);
+            return this.enhanceAnalysisResult(preliminaryResult);
+          } catch (fallbackError: any) {
+            logger.error('Fallback approach also failed', { 
+              error: fallbackError.message 
+            });
+            throw new Error(`Video analysis failed: ${fallbackError.message}`);
+          }
+        }
+        
+        // Rethrow the original error with extra context
+        throw new Error(`Gemini video analysis failed: ${aiError.message}`);
       }
-      
-      // Ensure we have a preliminary result at this point
-      if (!preliminaryResult) {
-        throw new Error('Failed to obtain analysis result after all attempts and fallbacks.');
-      }
-
-      // CRUCIAL STEP: Always enhance the preliminary result to ensure consistent status determination
-      // This applies database checks and determines the final vegan/uncertain status
-      const finalResult = this.enhanceAnalysisResult(preliminaryResult);
-      // --- End: Processing and final validation --- 
-
-      // Log the analysis completion
-      logVideoAnalysisResponse({
-        processingTimeSec: (Date.now() - new Date().getTime()) / 1000,
-        ingredientCount: finalResult.ingredients.length,
-        isVegan: finalResult.isVegan,
-        isUncertain: finalResult.isUncertain || false,
-        confidenceScore: finalResult.confidence,
-        uncertainIngredientsCount: finalResult.ingredients.filter((i: IngredientAnalysisResult) => i.isUncertain).length,
-        statusCode: 200
-      });
-      
-      // Clean up temp files
-      this.cleanupTempFiles(tempVideoPath, optimizedVideoPath);
-      
-      return finalResult; // Return the final enhanced result
     } catch (error: any) {
-      // Log the error
-      logVideoAnalysisResponse({
-        processingTimeSec: (Date.now() - new Date().getTime()) / 1000,
-        ingredientCount: 0,
-        isVegan: false,
-        isUncertain: false,
-        confidenceScore: 0,
-        uncertainIngredientsCount: 0,
-        statusCode: 500,
-        errorMessage: error.message
-      });
-      
-      logger.error('Error analyzing video', { 
+      // Log with detailed diagnostic information
+      logger.error('Video analysis failed', { 
         error: error.message,
-        stack: error.stack
+        stack: error.stack,
+        mimeType,
+        dataSize: base64Data.length,
+        tempFileCreated: !!tempVideoPath && fs.existsSync(tempVideoPath),
+        optimizedFileCreated: !!optimizedVideoPath && optimizedVideoPath !== tempVideoPath && fs.existsSync(optimizedVideoPath),
+        apiKeyConfigured: !!process.env.GEMINI_API_KEY,
+        ffmpegInstalled: this.videoOptimizer.isFfmpegInstalled?.() || false
       });
-      
-      // Clean up temp files even on error
-      this.cleanupTempFiles(tempVideoPath, optimizedVideoPath);
       
       throw error;
+    } finally {
+      // Clean up temporary files
+      this.cleanupTempFiles(tempVideoPath, optimizedVideoPath);
     }
   }
   
@@ -865,6 +824,82 @@ Använd verktyget 'recordIngredientAnalysis' för att returnera resultatet med b
         logger.warn('Failed to clean up temporary file', { filePath, error });
       }
     }
+  }
+
+  // Fixa funktionsdeklaration så att den returnerar rätt typ
+  private createFunctionDeclarations(): FunctionDeclarationsTool[] {
+    // Definiera ett korrekt funktionsdeklarationsobjekt som matchar förväntat format
+    const extractRecipeFunction: FunctionDeclaration = {
+      name: "extractRecipeData",
+      description: "Extracts recipe ingredients, instructions, and title from video",
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          ingredients: {
+            type: SchemaType.ARRAY,
+            items: {
+              type: SchemaType.STRING
+            },
+            description: "List of ingredients mentioned in the video"
+          },
+          instructions: {
+            type: SchemaType.ARRAY,
+            items: {
+              type: SchemaType.STRING
+            },
+            description: "List of cooking instructions shown in the video"
+          },
+          titles: {
+            type: SchemaType.ARRAY,
+            items: {
+              type: SchemaType.STRING
+            },
+            description: "Possible titles for this recipe based on the video content"
+          }
+        },
+        required: ["ingredients", "instructions", "titles"]
+      }
+    };
+
+    // Returnera en array med ett FunctionDeclarationsTool-objekt
+    return [
+      {
+        functionDeclarations: [extractRecipeFunction]
+      }
+    ];
+  }
+
+  // Säkerställ null-checks på FunctionCalls
+  // Ersätt den nuvarande debutten med en säkrare version:
+  private safetyCheckFunctionCalls(response: any) {
+    // Kontrollera om response.functionCalls är en funktion
+    const hasFunctionCalls = response && 
+                           typeof response.functionCalls === 'function';
+    
+    let functionCalls = null;
+    let firstFunctionCall = null;
+    let functionCallName = 'none';
+    
+    if (hasFunctionCalls) {
+      try {
+        functionCalls = response.functionCalls();
+        if (Array.isArray(functionCalls) && functionCalls.length > 0) {
+          firstFunctionCall = functionCalls[0];
+          if (firstFunctionCall && typeof firstFunctionCall.name === 'string') {
+            functionCallName = firstFunctionCall.name;
+          }
+        }
+      } catch (error) {
+        logger.warn('Error accessing function calls', { error: formatErrorMessage(error) });
+      }
+    }
+    
+    logger.debug('Received response from Gemini', { 
+      hasFunctionCalls: !!functionCalls && functionCalls.length > 0,
+      functionCallName
+    });
+    
+    return { functionCalls, firstFunctionCall, functionCallName };
   }
 }
 

@@ -26,12 +26,21 @@ export class VideoOptimizer {
    */
   private checkFfmpegInstalled(): boolean {
     try {
-      execAsync('ffmpeg -version');
+      // Use synchronous exec to avoid async constructor issues
+      require('child_process').execSync('ffmpeg -version', { stdio: 'ignore' });
       return true;
     } catch (error) {
       logger.warn('ffmpeg not found, video optimization will be limited', { error });
       return false;
     }
+  }
+  
+  /**
+   * Public method to check if ffmpeg is installed
+   * @returns True if ffmpeg is installed and available
+   */
+  isFfmpegInstalled(): boolean {
+    return this.ffmpegInstalled;
   }
   
   /**

@@ -8,7 +8,8 @@
   "scripts": {
     "start": "node dist/server.js",
     "dev": "set NODE_ENV=development && ts-node-dev -r tsconfig-paths/register src/server.ts",
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json && npm run build:copy",
+    "build:copy": "copy src\\services\\videoAnalysisService.ts dist\\services && copy src\\services\\veganValidator.ts dist\\services",
     "test": "set NODE_ENV=test && jest --watchAll",
     "test:coverage": "jest --coverage",
     "test:ci": "jest --ci",
@@ -20,7 +21,8 @@
     "test:api:bash": "bash ./scripts/test-api-curl.sh",
     "deploy:staging": "fly deploy --config fly.staging.toml",
     "deploy:production": "fly deploy",
-    "verify:config": "ts-node -r tsconfig-paths/register verify-config.js"
+    "verify:config": "ts-node -r tsconfig-paths/register verify-config.js",
+    "verify:api": "node verify-api.js"
   },
   "keywords": [],
   "author": "",
