@@ -41,9 +41,13 @@ EXPOSE 8080
 ENV NODE_ENV=production
 ENV PORT=8080
 
-# --- Restore original ENTRYPOINT and CMD --- 
-ENTRYPOINT ["node"]
-CMD ["dist/server.js"]
+# --- Debug Entrypoint (Uncomment for SSH debugging) ---
+ENTRYPOINT ["sleep", "infinity"]
+# CMD [] # No command needed when sleeping
+
+# --- Original Entrypoint (Comment out for SSH debugging) ---
+# ENTRYPOINT ["node"]
+# CMD ["dist/server.js"]
 
 # --- Debug Entrypoints/CMDs (commented out) ---
 # ENTRYPOINT ["sleep", "infinity"]

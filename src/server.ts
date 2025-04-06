@@ -1,29 +1,55 @@
 // src/server.ts
 console.log("--- Server.ts script starting ---"); 
 
-// Restore module-alias for runtime path mapping
-// import 'module-alias/register'; 
+// === Remove Module Alias Registration ===
+// // @ts-ignore - Suppress TS7016 for module-alias as it lacks types
+// import moduleAlias from 'module-alias'; 
+// const baseDir = __dirname; // In container, this will be /app/dist
+// moduleAlias.addAliases({
+//   '@': baseDir,
+// });
+// console.log(`--- Alias @ explicitly registered to: ${baseDir} ---`);
+// === End Remove Module Alias Registration ===
 
+// Now import other modules
 import express from 'express';
 import cors from 'cors';
-import winston from 'winston';
-import path from 'path'; // Add path import
-import moduleAlias from 'module-alias'; // Add module-alias import
+// import winston from 'winston'; // Remove unused import
+// import path from 'path'; // Remove unused import
+
+// Remove module-alias import from here
+// import moduleAlias from 'module-alias'; 
+
 // Remove Anthropic import
 // import { Anthropic } from '@anthropic-ai/sdk'; 
 import dotenv from 'dotenv';
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold, GenerationConfig } from "@google/generative-ai"; // Import Gemini
-// Assume Gemini prompts exist or define them here/import from config
-import { ANALYSIS_PROMPT, CROPPED_IMAGE_PROMPT } from '@/config/prompts'; 
-import { validateIngredients } from '@/services/veganValidator';
-import { compressImage, getBase64Size } from '@/utils/imageProcessor';
-import { checkUserLimit, incrementAnalysisCount } from '@/services/supabaseService';
-// Importera endast när det behövs i faktisk kod
-// import { supabase } from '@/services/supabaseService';
+// import { ANALYSIS_PROMPT, CROPPED_IMAGE_PROMPT } from '@/config/prompts'; // Old alias import
+import { ANALYSIS_PROMPT, CROPPED_IMAGE_PROMPT } from './config/prompts'; 
+
+// import analysisService from '@/services/analysisService'; // Old alias import
+// import analysisService from './services/analysisService'; 
+
+// import { logger } from './utils/logger';
+// import videoAnalysisRoutes from './routes/videoAnalysis'; 
+// import { handleServerError } from './middleware/errorHandler'; // File does not exist
+// import { authenticate } from './middleware/auth'; // File does not exist
 import apiRoutes from './routes';
 import { TempFileCleaner } from './utils/tempFileCleaner';
 
+// Import Gemini types
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold, GenerationConfig } from "@google/generative-ai";
+
+// Relative imports (without .js extension)
+import { validateIngredients } from './services/veganValidator';
+import { compressImage, getBase64Size } from './utils/imageProcessor';
+import { checkUserLimit, incrementAnalysisCount } from './services/supabaseService';
+
+// Load environment variables
 dotenv.config();
+
+// Initialize Supabase client immediately after loading env vars
+// initializeSupabase(); // Function does not exist
+// console.log("Supabase client initialized.");
 
 const app = express();
 app.use(cors());
@@ -405,7 +431,10 @@ app.get('/', (_req, res) => {  // Observera underscore-prefixet för oanvänd pa
 // Testendpoint för Supabase-anslutning
 app.get('/test-supabase', async (_req, res) => {
   try {
-    const { supabase } = await import('@/services/supabaseService');
+    // const { supabase } = await import('./services/supabaseService'); // Keep this one if supabaseService exports supabase
+    // If supabase is initialized elsewhere, this endpoint might need adjustment or removal
+    // Assuming supabaseService exports supabase for now:
+    const { supabase } = await import('./services/supabaseService'); 
     const { data, error } = await supabase
       .from('user_usage')
       .select('count(*)')
@@ -480,12 +509,3 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT} and host 0.0.0.0`);
   console.log(`Analysis API (Gemini) available at http://localhost:${PORT}/analyze`); // Updated log
 });
-
-// Explicitly register the alias
-const baseDir = __dirname; // In container, this will be /app/dist
-moduleAlias.addAliases({
-  '@': baseDir,
-});
-
-// Updated console log
-console.log(`--- Server.ts script starting --- Alias @ explicitly registered to: ${baseDir}`);

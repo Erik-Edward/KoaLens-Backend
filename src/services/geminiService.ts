@@ -1,7 +1,13 @@
 import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold, GenerationConfig, GenerateContentResult, FunctionDeclarationsTool } from '@google/generative-ai';
 import { AIProvider } from '../types/aiProvider';
-import config from '@/config/ai-config';
+import config from '../config/ai-config.js';
 import { logger, logAIRequest, logAIResponse } from '../utils/logger';
+
+// Validate environment variables from the imported config
+if (!config.gemini.apiKey) {
+    logger.error("Missing GEMINI_API_KEY environment variable.");
+    process.exit(1);
+}
 
 /**
  * Service class to handle all interactions with Google Gemini 2.5 Pro API
@@ -17,7 +23,7 @@ export class GeminiService implements AIProvider {
   private retryDelay: number = 1000;
 
   constructor() {
-    // Get configuration from environment variables via config module
+    // Get configuration from the imported config object
     this.genAI = new GoogleGenerativeAI(config.gemini.apiKey);
     this.modelName = config.gemini.modelName;
     this.maxOutputTokens = config.gemini.maxOutputTokens;
@@ -27,7 +33,10 @@ export class GeminiService implements AIProvider {
 
     logger.info('GeminiService initialized', { 
       modelName: this.modelName,
-      maxOutputTokens: this.maxOutputTokens 
+      maxOutputTokens: this.maxOutputTokens,
+      temperature: this.temperature,
+      topK: this.topK,
+      topP: this.topP,
     });
   }
 
@@ -69,9 +78,9 @@ export class GeminiService implements AIProvider {
       // Log request for monitoring
       logAIRequest('gemini', { prompt, generationConfig });
       
-      // Perform API call
+      // Construct the request object correctly for generateContent
       const result = await model.generateContent({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
         safetySettings,
         generationConfig,
       });
@@ -151,9 +160,9 @@ export class GeminiService implements AIProvider {
       });
       
       try {
-        // Perform API call with multimodal input
+        // Construct the request object correctly for generateContent
         const result = await model.generateContent({
-          contents: [{ role: 'user', parts: [{ text: prompt }, mediaPart] }],
+          contents: [{ role: "user", parts: [{ text: prompt }, mediaPart] }],
           generationConfig,
         });
         
@@ -272,6 +281,45 @@ export class GeminiService implements AIProvider {
       logger.error('Gemini token counting error', { error: error.message });
       // Return an estimate if the API call fails
       return Math.ceil(prompt.length / 4);
+    }
+  }
+
+  async analyzeContent(prompt: string): Promise<string | null> {
+    let requestSize = Buffer.byteLength(prompt, 'utf-8'); 
+    // Log AI Request (update to reflect removed parameters)
+    logAIRequest('gemini', { requestContent: prompt.substring(0, 100) + (prompt.length > 100 ? '...' : ''), requestSize });
+
+    // Construct parts without image or tools
+    const parts = [{ text: prompt }];
+
+    try {
+      const model = this.genAI.getGenerativeModel({ model: this.modelName });
+      const generationConfig = {
+        temperature: this.temperature,
+        topK: this.topK,
+        topP: this.topP,
+        maxOutputTokens: this.maxOutputTokens,
+      };
+
+      // Construct the request object correctly for generateContent
+      const result = await model.generateContent({
+        contents: [{ role: "user", parts }],
+        generationConfig,
+      });
+
+      const response = result.response;
+      const text = response.text();
+
+      logAIResponse('gemini', { 
+        responseText: text.substring(0, 100) + (text.length > 100 ? '...' : ''),
+        promptTokens: prompt.length / 4,
+        completionTokens: text.length / 4
+      });
+
+      return text;
+    } catch (error) {
+      logger.error('Gemini analyzeContent error', { error: error.message });
+      return null;
     }
   }
 }

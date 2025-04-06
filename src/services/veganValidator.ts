@@ -5,8 +5,8 @@ import {
   POTENTIALLY_NON_VEGAN, 
   ANIMAL_INDICATORS,
   SAFE_EXCEPTIONS 
-} from '@/constants/veganIngredients';
-import { logger } from '@/utils/logger';
+} from '../constants/veganIngredients';
+import { logger } from '../utils/logger';
 
 // Definiera threshold
 const FUZZY_MATCH_THRESHOLD = 0.8;
@@ -166,14 +166,14 @@ export function validateIngredients(ingredients: string[]): ValidationResult {
     if (normalized.length <= 2) return false;
     
     // Check against all known ingredients (both safe and non-vegan)
-    const allKnownIngredients = new Set([
+    const allKnownIngredients = new Set<string>([
       ...Array.from(DEFINITELY_NON_VEGAN),
       ...Array.from(POTENTIALLY_NON_VEGAN),
       ...Array.from(SAFE_EXCEPTIONS)
     ]);
     
     // Find best match against any known ingredient
-    const bestMatch = findBestMatch(normalized, allKnownIngredients);
+    const bestMatch = findBestMatch(normalized, allKnownIngredients as Set<string>);
     
     // If similarity is very low, it might be gibberish or misreading
     return bestMatch.similarity < 0.4;
@@ -283,8 +283,8 @@ export function validateIngredients(ingredients: string[]): ValidationResult {
     }
 
     // Kontrollera animaliska indikatorer i ingrediensnamnet
-    const hasAnimalIndicator = Array.from(ANIMAL_INDICATORS).some((indicator: string) => 
-      normalizedIngredient.includes(normalizeString(indicator))
+    const hasAnimalIndicator = Array.from(ANIMAL_INDICATORS).some((indicator: unknown) =>
+      normalizedIngredient.includes(normalizeString(indicator as string))
     );
     if (hasAnimalIndicator) {
       confidence = Math.min(confidence, 0.8);
