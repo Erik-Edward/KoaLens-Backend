@@ -36,9 +36,9 @@ COPY src/data/*.csv ./dist/data/
 EXPOSE 8080
 
 # Define the command to run the application
-# ENTRYPOINT ["node"]
-# CMD ["dist/server.js"]
+ENTRYPOINT ["node"]
+CMD ["dist/server.js"]
 
 # For debugging: Keep the container running indefinitely
-ENTRYPOINT ["sleep", "infinity"]
+# ENTRYPOINT ["sleep", "infinity"]
 # CMD [] 

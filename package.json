@@ -8,7 +8,7 @@
   "scripts": {
     "start": "node dist/server.js",
     "dev": "set NODE_ENV=development && ts-node-dev -r tsconfig-paths/register src/server.ts",
-    "build": "tsc && npx copyfiles -u 1 src/config/**/* dist/config",
+    "build": "tsc",
     "test": "set NODE_ENV=test && jest --watchAll",
     "test:coverage": "jest --coverage",
     "test:ci": "jest --ci",
