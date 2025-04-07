@@ -115,17 +115,28 @@ router.post('/reset-stats', (async (_req, res) => {
 }) as RequestHandler);
 
 /**
- * Endpoint for analyzing a video to identify ingredients
- * POST /api/analyze-video
- * Body: {
- *   base64Data: string,   // Base64 encoded video data
- *   mimeType: string,     // MIME type of the video
- *   preferredLanguage?: string // Optional preferred language
- *   requestId?: string    // Optional client-generated request ID for deduplication
- * }
+ * Helper function to process video analysis requests
+ * This is extracted to avoid code duplication between the endpoints
  */
-router.post('/analyze-video', (async (req: Request, res: Response) => {
+async function processVideoAnalysisRequest(req: Request, res: Response): Promise<void> {
   const startTime = Date.now();
+  
+  // Ny loggning för att se exakt vad som kommer in i begäran
+  logger.info('Video analysis request details', { 
+    bodyKeys: req.body ? Object.keys(req.body) : [],
+    bodySize: req.body ? JSON.stringify(req.body).length : 0,
+    hasBase64Data: !!req.body?.base64Data,
+    hasMimeType: !!req.body?.mimeType,
+    headers: {
+      accept: req.headers['accept'],
+      'content-length': req.headers['content-length'],
+      'content-type': req.headers['content-type'],
+      'user-agent': req.headers['user-agent'],
+    },
+    ip: req.ip,
+    method: req.method,
+    url: req.originalUrl
+  });
   
   // Update request statistics
   apiStats.requestsReceived++;
@@ -136,6 +147,7 @@ router.post('/analyze-video', (async (req: Request, res: Response) => {
     
     // Validate required fields
     if (!base64Data) {
+      logger.warn('Video analysis request missing base64Data field');
       apiStats.requestsFailed++;
       res.status(400).json({
         success: false,
@@ -145,6 +157,7 @@ router.post('/analyze-video', (async (req: Request, res: Response) => {
     }
     
     if (!mimeType) {
+      logger.warn('Video analysis request missing mimeType field');
       apiStats.requestsFailed++;
       res.status(400).json({
         success: false,
@@ -155,6 +168,7 @@ router.post('/analyze-video', (async (req: Request, res: Response) => {
     
     // Validate mimeType format
     if (!mimeType.startsWith('video/')) {
+      logger.warn(`Invalid mimeType received: ${mimeType}`);
       apiStats.requestsFailed++;
       res.status(400).json({
         success: false,
@@ -192,7 +206,8 @@ router.post('/analyze-video', (async (req: Request, res: Response) => {
       mimeType,
       preferredLanguage,
       dataSize: base64Data.length,
-      requestId: requestId || 'not-provided'
+      requestId: requestId || 'not-provided',
+      endpoint: req.originalUrl // Log which endpoint was used
     });
     
     // Process the video with VideoAnalysisService
@@ -250,48 +265,161 @@ router.post('/analyze-video', (async (req: Request, res: Response) => {
     apiStats.totalProcessingTimeMs += processingTimeMs;
     apiStats.averageProcessingTimeMs = apiStats.totalProcessingTimeMs / apiStats.requestsProcessed;
     
+    // Logga exakt vilken respons som skickas till klienten
+    logger.info('Sending analysis response to client', {
+      responseData: JSON.stringify({
+        success: true,
+        result: transformedResult
+      }),
+      isVegan: transformedResult.isVegan,
+      ingredientList: transformedResult.ingredientList?.length || 0,
+      confidence: transformedResult.confidence
+    });
+    
     // Return the analysis result in the format expected by the frontend
     res.status(200).json({
       success: true,
-      responseData: transformedResult
+      result: transformedResult
+    });
+  } catch (error: any) {
+    logger.error('Error processing video analysis', { 
+      error: error.message,
+      stack: error.stack,
+      endpoint: req.originalUrl
     });
     
-    // Log the full response for debugging
-    logger.debug('Video analysis response sent to client', { 
-      resultStructure: {
-        isVegan: transformedResult.isVegan,
-        confidence: transformedResult.confidence,
-        ingredientCount: transformedResult.ingredientList?.length || 0,
-        // Log the first few translated ingredients for verification
-        ingredientsListPreview: transformedResult.ingredientList?.slice(0, 5).join(', '), 
-        watchedIngredientsCount: transformedResult.watchedIngredients?.length || 0,
-        responseSize: JSON.stringify(transformedResult).length,
-        requestId: requestId || 'not-provided'
+    apiStats.requestsFailed++;
+    
+    // Send a user-friendly error response
+    res.status(500).json({
+      success: false,
+      error: 'Video analysis failed',
+      message: error.message || 'Unknown error'
+    });
+  }
+}
+
+/**
+ * POST /video/analyze-video
+ * Main endpoint for analyzing a video
+ * Request Body: {
+ *   base64Data: string, // Required, base64-encoded video data
+ *   mimeType: string,   // Required, must be 'video/*' format
+ *   preferredLanguage?: string // Optional preferred language
+ *   requestId?: string    // Optional client-generated request ID for deduplication
+ * }
+ */
+router.post('/analyze-video', (async (req: Request, res: Response) => {
+  // Set CORS headers to ensure mobile app can access this endpoint
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  
+  logger.info('Request received at /video/analyze-video endpoint', {
+    originalUrl: req.originalUrl,
+    baseUrl: req.baseUrl,
+    path: req.path,
+    method: req.method,
+    contentType: req.headers['content-type'],
+    contentLength: req.headers['content-length'],
+    hasBody: !!req.body,
+    bodyKeys: req.body ? Object.keys(req.body) : [],
+    hasBase64Data: !!req.body?.base64Data,
+    hasMimeType: !!req.body?.mimeType
+  });
+  
+  await processVideoAnalysisRequest(req, res);
+}) as RequestHandler);
+
+/**
+ * OPTIONS /video/analyze-video
+ * Handle preflight CORS requests for the analyze-video endpoint
+ */
+router.options('/analyze-video', ((_req: Request, res: Response) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.sendStatus(200);
+}) as RequestHandler);
+
+/**
+ * POST /video/debug-video-api
+ * Diagnostic endpoint to check if the video API is working
+ * and provide detailed feedback on request issues
+ */
+router.post('/debug-video-api', (async (req: Request, res: Response) => {
+  logger.info('Debug endpoint called', {
+    url: req.originalUrl,
+    method: req.method,
+    contentType: req.headers['content-type'],
+    bodyKeys: Object.keys(req.body || {}),
+  });
+  
+  // Set CORS headers
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  
+  try {
+    // Check if API key is configured
+    const hasGeminiKey = !!process.env.GEMINI_API_KEY;
+    
+    // Check FFmpeg availability via videoAnalysisService
+    const ffmpegStatus = videoAnalysisService.isFfmpegInstalled();
+    
+    // Validate request body
+    const validationResults = {
+      hasBase64Data: !!req.body?.base64Data,
+      hasMimeType: !!req.body?.mimeType,
+      isValidMimeType: req.body?.mimeType?.startsWith('video/'),
+      dataFormat: typeof req.body?.base64Data,
+      dataSize: req.body?.base64Data ? req.body.base64Data.length : 0,
+      bodyContentType: req.headers['content-type'],
+    };
+    
+    const isValidRequest = validationResults.hasBase64Data && 
+                           validationResults.hasMimeType &&
+                           validationResults.isValidMimeType;
+    
+    // Return comprehensive debug information
+    res.status(200).json({
+      success: true,
+      apiStatus: {
+        endpoint: req.originalUrl,
+        geminiApiConfigured: hasGeminiKey,
+        ffmpegInstalled: ffmpegStatus,
+        environment: process.env.NODE_ENV || 'development',
+        enableTestRoutes: process.env.ENABLE_TEST_ROUTES === 'true',
+        timestamp: new Date().toISOString()
+      },
+      requestValidation: validationResults,
+      isValidRequest: isValidRequest,
+      apiStats: {
+        requestsReceived: apiStats.requestsReceived,
+        requestsProcessed: apiStats.requestsProcessed,
+        requestsFailed: apiStats.requestsFailed,
+        averageProcessingTimeMs: apiStats.averageProcessingTimeMs
+      },
+      message: isValidRequest 
+        ? "Request format is valid. If you're experiencing issues, try the /video/analyze-video endpoint."
+        : "Request format is invalid. Please check the validation results.",
+      correctFormat: {
+        endpoint: "/api/video/analyze-video",
+        contentType: "application/json",
+        method: "POST",
+        bodyFormat: {
+          base64Data: "BASE64_ENCODED_VIDEO_DATA",
+          mimeType: "video/mp4", // or another valid video MIME type
+          preferredLanguage: "sv" // optional
+        }
       }
     });
   } catch (error: any) {
-    // Update error statistics
-    apiStats.requestsFailed++;
-    
-    // Handle errors
-    logger.error('Video analysis error', { 
-      error: error.message,
-      stack: error.stack
-    });
-    
-    // Determine appropriate status code based on error type
-    let statusCode = 500;
-    if (error.message.includes('size exceeds')) {
-      statusCode = 413; // Payload Too Large
-    } else if (error.message.includes('Invalid')) {
-      statusCode = 400; // Bad Request
-    } else if (error.message.includes('duplicate')) {
-      statusCode = 429; // Too Many Requests
-    }
-    
-    res.status(statusCode).json({
+    logger.error('Error in debug endpoint', { error });
+    res.status(500).json({
       success: false,
-      error: error.message
+      error: error.message,
+      stack: process.env.NODE_ENV === 'production' ? undefined : error.stack
     });
   }
 }) as RequestHandler);

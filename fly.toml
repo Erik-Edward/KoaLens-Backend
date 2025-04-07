@@ -12,6 +12,7 @@ console_command = '/bin/sh'
 [env]
   NODE_ENV = 'production'
   PORT = '8080'
+  ENABLE_TEST_ROUTES = 'true'
 
 # Remove the [processes] section, CMD in Dockerfile defines the start command
 # [processes]

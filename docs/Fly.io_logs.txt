@@ -1,0 +1,137 @@
+Waiting for logs...
+
+2025-04-07T09:23:20.420 app[e286e727be9368] arn [info] warn: Endpoint not found {"headers":{"accept":"application/json, text/plain, */*","user-agent":"okhttp/4.9.2"},"method":"GET","path":"/health","query":{},"service":"koalens-backend","timestamp":"2025-04-07T09:23:20.419Z"}
+
+2025-04-07T09:23:34.937 app[e286e727be9368] arn [info] warn: Endpoint not found {"headers":{"accept":"application/json, text/plain, */*","user-agent":"okhttp/4.9.2"},"method":"GET","path":"/health","query":{},"service":"koalens-backend","timestamp":"2025-04-07T09:23:34.937Z"}
+
+2025-04-07T09:23:34.953 app[e286e727be9368] arn [info] Hämtar räknare "analysis_count" för användare: 81adf8e6-b316-4cea-904c-da936268aa39
+
+2025-04-07T09:23:35.000 app[e286e727be9368] arn [info] Hämtar räknare "analysis_count" för användare: 81adf8e6-b316-4cea-904c-da936268aa39
+
+2025-04-07T09:23:35.439 app[e286e727be9368] arn [info] Räknarinformation hämtad: {
+
+2025-04-07T09:23:35.439 app[e286e727be9368] arn [info] counter_id: '9e24a228-d471-4b5c-8ea6-4bf4cb78a76d',
+
+2025-04-07T09:23:35.439 app[e286e727be9368] arn [info] user_id: '81adf8e6-b316-4cea-904c-da936268aa39',
+
+2025-04-07T09:23:35.439 app[e286e727be9368] arn [info] counter_name: 'analysis_count',
+
+2025-04-07T09:23:35.439 app[e286e727be9368] arn [info] value: 5,
+
+2025-04-07T09:23:35.439 app[e286e727be9368] arn [info] limit: 15,
+
+2025-04-07T09:23:35.439 app[e286e727be9368] arn [info] remaining: 10,
+
+2025-04-07T09:23:35.439 app[e286e727be9368] arn [info] is_limited: true,
+
+2025-04-07T09:23:35.439 app[e286e727be9368] arn [info] has_reached_limit: false,
+
+2025-04-07T09:23:35.439 app[e286e727be9368] arn [info] reset_frequency: 'monthly',
+
+2025-04-07T09:23:35.439 app[e286e727be9368] arn [info] last_reset: '2025-04-06T20:23:28.698642+00:00',
+
+2025-04-07T09:23:35.439 app[e286e727be9368] arn [info] next_reset: '2025-05-06T20:23:28.698642+00:00'
+
+2025-04-07T09:23:35.439 app[e286e727be9368] arn [info] }
+
+2025-04-07T09:23:35.446 app[e286e727be9368] arn [info] Räknarinformation hämtad: {
+
+2025-04-07T09:23:35.446 app[e286e727be9368] arn [info] counter_id: '9e24a228-d471-4b5c-8ea6-4bf4cb78a76d',
+
+2025-04-07T09:23:35.446 app[e286e727be9368] arn [info] user_id: '81adf8e6-b316-4cea-904c-da936268aa39',
+
+2025-04-07T09:23:35.446 app[e286e727be9368] arn [info] counter_name: 'analysis_count',
+
+2025-04-07T09:23:35.446 app[e286e727be9368] arn [info] value: 5,
+
+2025-04-07T09:23:35.446 app[e286e727be9368] arn [info] limit: 15,
+
+2025-04-07T09:23:35.446 app[e286e727be9368] arn [info] remaining: 10,
+
+2025-04-07T09:23:35.446 app[e286e727be9368] arn [info] is_limited: true,
+
+2025-04-07T09:23:35.446 app[e286e727be9368] arn [info] has_reached_limit: false,
+
+2025-04-07T09:23:35.446 app[e286e727be9368] arn [info] reset_frequency: 'monthly',
+
+2025-04-07T09:23:35.446 app[e286e727be9368] arn [info] last_reset: '2025-04-06T20:23:28.698642+00:00',
+
+2025-04-07T09:23:35.446 app[e286e727be9368] arn [info] next_reset: '2025-05-06T20:23:28.698642+00:00'
+
+2025-04-07T09:23:35.446 app[e286e727be9368] arn [info] }
+
+2025-04-07T09:23:35.530 app[e286e727be9368] arn [info] Hämtar räknare "analysis_count" för användare: 81adf8e6-b316-4cea-904c-da936268aa39
+
+2025-04-07T09:23:35.610 app[e286e727be9368] arn [info] Räknarinformation hämtad: {
+
+2025-04-07T09:23:35.610 app[e286e727be9368] arn [info] counter_id: '9e24a228-d471-4b5c-8ea6-4bf4cb78a76d',
+
+2025-04-07T09:23:35.610 app[e286e727be9368] arn [info] user_id: '81adf8e6-b316-4cea-904c-da936268aa39',
+
+2025-04-07T09:23:35.610 app[e286e727be9368] arn [info] counter_name: 'analysis_count',
+
+2025-04-07T09:23:35.610 app[e286e727be9368] arn [info] value: 5,
+
+2025-04-07T09:23:35.610 app[e286e727be9368] arn [info] limit: 15,
+
+2025-04-07T09:23:35.610 app[e286e727be9368] arn [info] remaining: 10,
+
+2025-04-07T09:23:35.610 app[e286e727be9368] arn [info] is_limited: true,
+
+2025-04-07T09:23:35.610 app[e286e727be9368] arn [info] has_reached_limit: false,
+
+2025-04-07T09:23:35.610 app[e286e727be9368] arn [info] reset_frequency: 'monthly',
+
+2025-04-07T09:23:35.610 app[e286e727be9368] arn [info] last_reset: '2025-04-06T20:23:28.698642+00:00',
+
+2025-04-07T09:23:35.610 app[e286e727be9368] arn [info] next_reset: '2025-05-06T20:23:28.698642+00:00'
+
+2025-04-07T09:23:35.610 app[e286e727be9368] arn [info] }
+
+2025-04-07T09:23:39.591 app[e286e727be9368] arn [info] info: Request received at /video/analyze-video endpoint {"baseUrl":"/api/video","bodyKeys":["base64Data","mimeType","preferredLanguage"],"contentLength":"13814691","contentType":"application/json","hasBase64Data":true,"hasBody":true,"hasMimeType":true,"method":"POST","originalUrl":"/api/video/analyze-video","path":"/analyze-video","service":"koalens-backend","timestamp":"2025-04-07T09:23:39.591Z"}
+
+2025-04-07T09:23:39.688 app[e286e727be9368] arn [info] info: Video analysis request details {"bodyKeys":["base64Data","mimeType","preferredLanguage"],"bodySize":13814691,"hasBase64Data":true,"hasMimeType":true,"headers":{"accept":"application/json","content-length":"13814691","content-type":"application/json","user-agent":"okhttp/4.9.2"},"ip":"172.16.0.202","method":"POST","service":"koalens-backend","timestamp":"2025-04-07T09:23:39.687Z","url":"/api/video/analyze-video"}
+
+2025-04-07T09:23:39.689 app[e286e727be9368] arn [info] info: Video analysis request received {"dataSize":13814620,"endpoint":"/api/video/analyze-video","mimeType":"video/quicktime","preferredLanguage":"sv","requestId":"not-provided","service":"koalens-backend","timestamp":"2025-04-07T09:23:39.689Z"}
+
+2025-04-07T09:23:39.690 app[e286e727be9368] arn [info] info: Video analysis request received {"dataSize":13814620,"hasApiKey":true,"mimeType":"video/quicktime","model":"gemini-2.0-flash","preferredLanguage":"sv","service":"koalens-backend","timestamp":"2025-04-07T09:23:39.690Z"}
+
+2025-04-07T09:23:39.690 app[e286e727be9368] arn [info] info: Video analysis request received {"clientInfo":{},"dataSizeBytes":13814620,"mimeType":"video/quicktime","operation":"request","preferredLanguage":"sv","requestId":"not-provided","service":"videoAnalysis","timestamp":"2025-04-07T09:23:39.690Z"}
+
+2025-04-07T09:23:56.951 app[e286e727be9368] arn [info] info: Video optimization completed {"compressionRatio":"4.38","optimizedSizeMB":"2.26","originalSizeMB":"9.88","service":"koalens-backend","timestamp":"2025-04-07T09:23:56.951Z"}
+
+2025-04-07T09:23:56.955 app[e286e727be9368] arn [info] info: AI Request [gemini] {"generationConfig":{"maxOutputTokens":3072,"temperature":0.4,"topK":40,"topP":0.8},"mediaSizeBytes":2365446,"mediaType":"video/quicktime","prompt":"\nDu är en expert på att analysera matprodukter och identifiera deras ingredienser för att avgöra om produkten är vegansk.\n\nMÅLSPRÅK för översättning: Swedish (sv)\n\nINSTRUKTIONER:\n1. Analysera videon NOGGRANT. Identifiera ingredienserna som tydligt VISAS på produktens förpackning.\n2. Använd verktyget 'recordIngredientAnalysis' för att strukturera och returnera ditt svar.\n3. För varje identifierad ingrediens:\n a. Ange ingrediensens **originalnamn** (som det står på förpackningen) i fältet 'name'.\n b. **Översätt originalnamnet till målspråket (Swedish)** och ange det i fältet 'translated_name'. Om du inte kan översätta, ange originalnamnet även i 'translated_name'.\n c. Ange dess status: 'vegansk', 'icke-vegansk', 'osäker'.\n d. SPECIFIK REGEL: Ingrediensen 'Arom' (eller motsvarande på andra språk) ska klassificeras som 'osäker' om dess ursprung inte specificeras.\n e. Ange en konfidenspoäng (0.0-1.0) för statusklassificeringen.\n f. VIKTIGT: För 'icke-vegansk' eller 'osäker' status, MÅSTE du ange en kort motivering ('reasoning').\n4. Ange produktens övergripande status ('sannolikt vegansk', 'sannolikt icke-vegansk', 'oklart') och en övergripande konfidenspoäng.\n5. Inkludera ALLA identifierade ingredienser, men lista varje unik ingrediens endast EN gång baserat på dess originalnamn.\n6. Basera din analys ENDAST på vad som FAKTISKT SYNS i videon.\n\nAnvänd verktyget 'recordIngredientAnalysis' för att returnera resultatet med både originalnamn ('name') och namn översatta till Swedish ('translated_name').\n","provider":"gemini","service":"koalens-backend","timestamp":"2025-04-07T09:23:56.955Z","toolsProvided":true}
+
+2025-04-07T09:23:59.176 app[e286e727be9368] arn [info] info: AI Response [gemini] {"completionTokens":0,"functionCallNames":"recordIngredientAnalysis","functionCallPresent":true,"mediaTokens":"Video content","promptTokens":382.25,"provider":"gemini","responseText":"","service":"koalens-backend","timestamp":"2025-04-07T09:23:59.176Z"}
+
+2025-04-07T09:23:59.183 app[e286e727be9368] arn [info] info: Video analysis completed by service {"ingredientCount":4,"isUncertain":false,"isVegan":true,"processingTimeSec":"19.59","requestId":"not-provided","service":"koalens-backend","timestamp":"2025-04-07T09:23:59.183Z"}
+
+2025-04-07T09:23:59.184 app[e286e727be9368] arn [info] info: Sending analysis response to client {"confidence":1,"ingredientList":4,"isVegan":true,"responseData":"{\"success\":true,\"result\":{\"isVegan\":true,\"isUncertain\":false,\"confidence\":1,\"ingredientList\":[\"Finskuren lök (EU)\",\"palmolja\",\"vetemjöl\",\"salt\"],\"watchedIngredients\":[],\"nonVeganIngredients\":[],\"uncertainIngredients\":[],\"uncertainReasons\":[],\"reasoning\":\"Alla identifierade ingredienser är veganska baserat på databas och AI-analys.\"}}","service":"koalens-backend","timestamp":"2025-04-07T09:23:59.184Z"}
+
+2025-04-07T09:23:59.397 app[e286e727be9368] arn [info] Ökar räknare "analysis_count" för användare: 81adf8e6-b316-4cea-904c-da936268aa39
+
+2025-04-07T09:23:59.488 app[e286e727be9368] arn [info] Räknare ökad: {
+
+2025-04-07T09:23:59.488 app[e286e727be9368] arn [info] limit: 15,
+
+2025-04-07T09:23:59.488 app[e286e727be9368] arn [info] value: 6,
+
+2025-04-07T09:23:59.488 app[e286e727be9368] arn [info] user_id: '81adf8e6-b316-4cea-904c-da936268aa39',
+
+2025-04-07T09:23:59.488 app[e286e727be9368] arn [info] remaining: 9,
+
+2025-04-07T09:23:59.488 app[e286e727be9368] arn [info] counter_id: '9e24a228-d471-4b5c-8ea6-4bf4cb78a76d',
+
+2025-04-07T09:23:59.488 app[e286e727be9368] arn [info] is_limited: true,
+
+2025-04-07T09:23:59.488 app[e286e727be9368] arn [info] last_reset: '2025-04-06T20:23:28.698642+00:00',
+
+2025-04-07T09:23:59.488 app[e286e727be9368] arn [info] next_reset: '2025-05-06T20:23:28.698642+00:00',
+
+2025-04-07T09:23:59.488 app[e286e727be9368] arn [info] counter_name: 'analysis_count',
+
+2025-04-07T09:23:59.488 app[e286e727be9368] arn [info] reset_frequency: 'monthly',
+
+2025-04-07T09:23:59.488 app[e286e727be9368] arn [info] has_reached_limit: false
+
+2025-04-07T09:23:59.488 app[e286e727be9368] arn [info] }

@@ -1,17 +1,16 @@
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 import { VideoOptimizer } from '../utils/videoOptimizer';
-import geminiService from '../services/geminiService';
+import geminiService from './geminiService';
 import { logger } from '../utils/logger';
 import { v4 as uuidv4 } from 'uuid';
-import { formatErrorMessage } from '../utils/errorHandling';
+import { checkIngredientStatus } from '../utils/ingredientsDatabase';
+import { z } from 'zod';
 import {
   logVideoAnalysisRequest,
   logIngredientCorrection
 } from '../utils/videoLogger';
-import { checkIngredientStatus } from '../utils/ingredientsDatabase';
-import { z } from 'zod';
 
 // Import necessary types from @google/generative-ai
 import { 
@@ -47,7 +46,7 @@ const ingredientAnalysisArgsSchema = z.object({
     name: z.string().min(1, "Ingredient name cannot be empty (original language)"),
     translated_name: z.string().min(1, "Translated ingredient name cannot be empty"),
     status: z.enum(["vegansk", "icke-vegansk", "osäker"]),
-    reasoning: z.string(),
+    reasoning: z.string().optional(),
     confidence: z.number().min(0).max(1),
   })).min(0),
 });
@@ -61,10 +60,17 @@ type IngredientAnalysisArgs = {
     name: string;
     translated_name: string;
     status: "vegansk" | "icke-vegansk" | "osäker";
-    reasoning: string;
+    reasoning?: string;
     confidence: number;
   }[];
 };
+
+// Interface för en ingrediens
+export interface Ingredient {
+  name: string;
+  isVegan: boolean;
+  isUncertain?: boolean;
+}
 
 /**
  * Service class to handle video analysis using Gemini
@@ -85,21 +91,29 @@ export class VideoAnalysisService {
     
     this.videoOptimizer = new VideoOptimizer();
     
-    let ffmpegInstalled = false;
+    // Check if ffmpeg is installed
     try {
-      // Safely check if method exists and call it
-      if (typeof this.videoOptimizer.isFfmpegInstalled === 'function') {
-        ffmpegInstalled = this.videoOptimizer.isFfmpegInstalled();
+      if (!this.videoOptimizer.isFfmpegInstalled()) {
+        logger.error('ffmpeg is not installed or not detected!');
+        throw new Error('ffmpeg is required for video processing but was not found.');
       }
-    } catch (error) {
-      logger.warn('Error checking ffmpeg installation', { error: formatErrorMessage(error) });
+    } catch (error: any) {
+      logger.warn('Error checking ffmpeg installation', { error: error.message });
     }
     
     logger.info('VideoAnalysisService initialized', { 
       tempDir: this.tempDir, 
       maxVideoSizeBytes: this.maxVideoSizeBytes,
-      ffmpegInstalled
+      ffmpegInstalled: this.videoOptimizer.isFfmpegInstalled()
     });
+  }
+  
+  /**
+   * Check if ffmpeg is installed and available for use
+   * @returns boolean indicating if ffmpeg is available
+   */
+  isFfmpegInstalled(): boolean {
+    return this.videoOptimizer.isFfmpegInstalled();
   }
   
   /**
@@ -119,7 +133,7 @@ export class VideoAnalysisService {
       mimeType,
       preferredLanguage,
       hasApiKey: !!process.env.GEMINI_API_KEY,
-      model: process.env.GEMINI_MODEL || 'gemini-1.5-pro-latest'
+      model: process.env.GEMINI_MODEL || 'gemini-2.0-flash'
     });
     
     logVideoAnalysisRequest({
@@ -130,6 +144,7 @@ export class VideoAnalysisService {
     
     let tempVideoPath = '';
     let optimizedVideoPath = '';
+    let useOriginalVideo = false;
     
     try {
       // Validate video data
@@ -158,34 +173,65 @@ export class VideoAnalysisService {
       const videoId = uuidv4();
       tempVideoPath = path.join(this.tempDir, `${videoId}-original.${this.getFileExtension(mimeType)}`);
       const buffer = Buffer.from(base64Data, 'base64');
-      fs.writeFileSync(tempVideoPath, buffer);
-      logger.debug('Saved video to temporary file', { 
-        tempVideoPath, 
-        sizeBytes: buffer.length 
-      });
       
-      // Optimize video if possible
-      optimizedVideoPath = tempVideoPath;
       try {
-        logger.debug('Starting video optimization');
-        optimizedVideoPath = await this.videoOptimizer.optimize(
+        fs.writeFileSync(tempVideoPath, buffer);
+        logger.debug('Saved video to temporary file', { 
           tempVideoPath, 
-          path.join(this.tempDir, `${videoId}-optimized.mp4`)
-        );
-        logger.debug('Video optimization completed', { 
-          optimizedVideoPath,
-          originalPath: tempVideoPath 
+          sizeBytes: buffer.length 
         });
-      } catch (error: any) {
-        logger.error('Video optimization failed, will use original video', { 
-          error: error.message 
+      } catch (fsError) {
+        logger.error('Failed to save video to temp file, using in-memory video instead', {
+          error: fsError instanceof Error ? fsError.message : String(fsError),
+          tempDir: this.tempDir
         });
-        // Continue with original video
+        useOriginalVideo = true;
       }
       
-      // Read the video file
-      const optimizedBuffer = fs.readFileSync(optimizedVideoPath);
-      const optimizedBase64 = optimizedBuffer.toString('base64');
+      // Optimize video if possible and if we could save the temp file
+      optimizedVideoPath = tempVideoPath;
+      if (!useOriginalVideo) {
+        try {
+          logger.debug('Starting video optimization');
+          if (!this.videoOptimizer.isFfmpegInstalled()) {
+            logger.warn('FFMPEG not installed, skipping optimization and using original video');
+            useOriginalVideo = true;
+          } else {
+            optimizedVideoPath = await this.videoOptimizer.optimize(
+              tempVideoPath, 
+              path.join(this.tempDir, `${videoId}-optimized.mp4`)
+            );
+            logger.debug('Video optimization completed', { 
+              optimizedVideoPath,
+              originalPath: tempVideoPath 
+            });
+          }
+        } catch (error: any) {
+          logger.error('Video optimization failed, will use original video', { 
+            error: error.message 
+          });
+          useOriginalVideo = true;
+          // Continue with original video
+        }
+      }
+      
+      // Get the video data for analysis - either optimized or original
+      let videoForAnalysis: string;
+      if (useOriginalVideo) {
+        logger.info('Using original unoptimized video for analysis');
+        videoForAnalysis = base64Data;
+      } else {
+        // Read the optimized video file
+        try {
+          const optimizedBuffer = fs.readFileSync(optimizedVideoPath);
+          videoForAnalysis = optimizedBuffer.toString('base64');
+        } catch (readError) {
+          logger.error('Failed to read optimized video, falling back to original', {
+            error: readError instanceof Error ? readError.message : String(readError)
+          });
+          videoForAnalysis = base64Data;
+        }
+      }
       
       logger.debug('Analysis metadata', {
         originalVideoFileSize: base64Data.length,
@@ -196,7 +242,8 @@ export class VideoAnalysisService {
         optimizedFilePath: optimizedVideoPath,
         optimizedFileCreated: !!optimizedVideoPath && optimizedVideoPath !== tempVideoPath && fs.existsSync(optimizedVideoPath),
         apiKeyConfigured: !!process.env.GEMINI_API_KEY,
-        ffmpegInstalled: this.videoOptimizer.isFfmpegInstalled?.() || false
+        ffmpegInstalled: this.videoOptimizer.isFfmpegInstalled(),
+        useOriginalVideo: useOriginalVideo
       });
       
       // Create a prompt for AI video analysis
@@ -209,19 +256,19 @@ export class VideoAnalysisService {
         // Generate content with Gemini using FunctionCalling
         logger.debug('Calling Gemini API for video analysis', { 
           promptLength: prompt.length,
-          videoSize: optimizedBase64.length,
+          videoSize: videoForAnalysis.length,
           functionCallingEnabled: true 
         });
         
         const result = await geminiService.generateContentFromVideo(
           prompt,
-          optimizedBase64,
+          videoForAnalysis,
           mimeType,
           functionDeclarations
         );
         
         const response = result.response;
-        const { functionCalls, firstFunctionCall, functionCallName } = this.safetyCheckFunctionCalls(response);
+        const { functionCalls, firstFunctionCall } = this.safetyCheckFunctionCalls(response);
         
         if (!functionCalls || functionCalls.length === 0) {
           logger.warn('No function calls detected in Gemini response, falling back to simplified approach');
@@ -257,7 +304,47 @@ export class VideoAnalysisService {
             expectedFunction: 'recordIngredientAnalysis',
             actualFunction: functionCall.name 
           });
-          throw new Error('Unexpected function call in AI response');
+          
+          // NEW: Handle extractRecipeData function call as a fallback
+          if (functionCall.name === 'extractRecipeData') {
+            logger.info('Handling extractRecipeData function call as fallback', {
+              functionName: functionCall.name
+            });
+            
+            try {
+              // Parse the function arguments
+              const argsString = typeof functionCall.args === 'string' 
+                ? functionCall.args 
+                : JSON.stringify(functionCall.args);
+                
+              const args = JSON.parse(argsString) as unknown;
+              
+              // Extract ingredients from the extractRecipeData args
+              if (args && typeof args === 'object' && 'ingredients' in args && Array.isArray(args.ingredients)) {
+                logger.info('Successfully extracted ingredients from extractRecipeData', {
+                  ingredientCount: args.ingredients.length
+                });
+                
+                // Create preliminary result from extractRecipeData response
+                const preliminaryResult = this.mapExtractRecipeDataToPreliminaryResult(args);
+                
+                // Enhance the result with database checks
+                return this.enhanceAnalysisResult(preliminaryResult);
+              } else {
+                logger.error('Invalid extractRecipeData response format', { args });
+                throw new Error('Invalid extractRecipeData response format');
+              }
+            } catch (parseError: any) {
+              logger.error('Error parsing extractRecipeData function call', {
+                error: parseError.message,
+                args: functionCall.args
+              });
+              throw new Error('Failed to parse extractRecipeData: ' + parseError.message);
+            }
+          } else {
+            // If not a recognized function, throw error
+            throw new Error('Unexpected function call in AI response');
+          }
         }
         
         try {
@@ -310,7 +397,7 @@ export class VideoAnalysisService {
           try {
             const fallbackResult = await geminiService.generateContentFromMedia(
               fallbackPrompt, 
-              optimizedBase64, 
+              videoForAnalysis, 
               mimeType
             );
             
@@ -337,7 +424,7 @@ export class VideoAnalysisService {
         tempFileCreated: !!tempVideoPath && fs.existsSync(tempVideoPath),
         optimizedFileCreated: !!optimizedVideoPath && optimizedVideoPath !== tempVideoPath && fs.existsSync(optimizedVideoPath),
         apiKeyConfigured: !!process.env.GEMINI_API_KEY,
-        ffmpegInstalled: this.videoOptimizer.isFfmpegInstalled?.() || false
+        ffmpegInstalled: this.videoOptimizer.isFfmpegInstalled()
       });
       
       throw error;
@@ -400,17 +487,85 @@ export class VideoAnalysisService {
         parsedResult = this.extractIngredientsWithRegex(result);
       }
 
-      // Basic validation of the parsed structure
-      if (!parsedResult || !Array.isArray(parsedResult.ingredients)) {
-         throw new Error('Invalid or incomplete analysis result structure after parsing attempts');
+      // 4. NEW: Handle Gemini structured response with 'ingredientAnalysis' instead of 'ingredients'
+      if (parsedResult && Array.isArray(parsedResult.ingredientAnalysis) && !Array.isArray(parsedResult.ingredients)) {
+        logger.info('Detected Gemini format with ingredientAnalysis array, converting to expected format');
+        
+        // Map from Gemini's format to our expected format
+        const ingredients = parsedResult.ingredientAnalysis.map((item: any) => {
+          return {
+            name: item.name || item.translated_name || "Unknown ingredient",
+            isVegan: item.status === "vegansk",
+            isUncertain: item.status === "osäker",
+            confidence: item.confidence || 0.5,
+            reasoning: item.reasoning || ""
+          };
+        });
+        
+        // Determine overall status
+        let isVegan = parsedResult.overallStatus === "sannolikt vegansk";
+        let isUncertain = parsedResult.overallStatus === "oklart";
+        let confidence = parsedResult.overallConfidence || 0.5;
+        
+        // Create a new result object with the mapped data
+        parsedResult = {
+          ingredients: ingredients,
+          isVegan: isVegan,
+          isUncertain: isUncertain,
+          confidence: confidence,
+          reasoning: parsedResult.reasoning || `Produkt analyserad: ${parsedResult.overallStatus}`,
+          uncertainReasons: []
+        };
+        
+        logger.debug('Successfully converted Gemini format to expected structure', {
+          ingredientCount: ingredients.length,
+          isVegan: isVegan,
+          confidence: confidence
+        });
+      }
+
+      // Basic validation of the parsed structure - expanded validation
+      if (!parsedResult) {
+        throw new Error('No valid result structure found in AI response');
+      }
+      
+      // Check if ingredients array exists, or create from available data
+      if (!Array.isArray(parsedResult.ingredients)) {
+        logger.warn('No ingredients array found in parsed result, attempting recovery');
+        
+        // Try to recover from other data structures
+        if (Array.isArray(parsedResult.ingredientAnalysis)) {
+          parsedResult.ingredients = parsedResult.ingredientAnalysis.map((item: any) => {
+            return {
+              name: item.name || "Unknown ingredient",
+              isVegan: item.status === "vegansk" || (typeof item.isVegan === 'boolean' ? item.isVegan : false),
+              isUncertain: item.status === "osäker",
+              confidence: item.confidence || 0.5
+            };
+          });
+        } else if (parsedResult.ingredients && typeof parsedResult.ingredients === 'string') {
+          // Handle case where ingredients might be a comma-separated string
+          parsedResult.ingredients = parsedResult.ingredients.split(/,\s*/).map((name: string) => {
+            return { name, isVegan: true, confidence: 0.5 };
+          });
+        } else {
+          // Last resort: create empty array
+          parsedResult.ingredients = [];
+          throw new Error('Could not recover ingredients data from parsed result');
+        }
       }
       
       // Ensure confidence and isVegan exist at the top level (even if regex was used)
       if (typeof parsedResult.isVegan !== 'boolean') {
+        if (parsedResult.overallStatus) {
+          parsedResult.isVegan = parsedResult.overallStatus === "sannolikt vegansk";
+        } else {
           parsedResult.isVegan = false; // Default to false if missing
+        }
       }
+      
       if (typeof parsedResult.confidence !== 'number') {
-          parsedResult.confidence = 0.5; // Default confidence if missing
+        parsedResult.confidence = parsedResult.overallConfidence || 0.5; // Default confidence if missing
       }
 
       // NOTE: We no longer call enhanceAnalysisResult here. 
@@ -419,6 +574,7 @@ export class VideoAnalysisService {
       logger.info('Successfully parsed AI analysis text to preliminary result', {
         ingredientCount: parsedResult.ingredients.length,
         preliminaryIsVegan: parsedResult.isVegan, // May change after enhancement
+        source: Array.isArray(parsedResult.ingredientAnalysis) ? 'gemini-direct-json' : 'standard-format'
       });
 
       // Return preliminary result
@@ -460,7 +616,59 @@ export class VideoAnalysisService {
       confidence: 0.5 // Default
     };
 
-    // Try finding the ingredients array structure
+    logger.debug('Attempting regex extraction from raw text', { textLength: text.length });
+
+    // NEW: First try to find the Gemini format (ingredientAnalysis)
+    const ingredientAnalysisMatch = text.match(/"ingredientAnalysis"\s*:\s*\[([\s\S]*?)\]/);
+    if (ingredientAnalysisMatch && ingredientAnalysisMatch[1]) {
+      logger.debug('Found ingredientAnalysis pattern in text');
+      const ingredientObjectsText = ingredientAnalysisMatch[1];
+      // Match individual { ... } objects within the array text
+      const individualIngredientMatches = ingredientObjectsText.match(/\{[\s\S]*?\}/g);
+
+      if (individualIngredientMatches) {
+        const tempIngredients: any[] = [];
+        individualIngredientMatches.forEach(ingredientText => {
+          const nameMatch = ingredientText.match(/"name"\s*:\s*"([^"]*)"/);
+          const translatedNameMatch = ingredientText.match(/"translated_name"\s*:\s*"([^"]*)"/);
+          const statusMatch = ingredientText.match(/"status"\s*:\s*"([^"]*)"/);
+          const confidenceMatch = ingredientText.match(/"confidence"\s*:\s*([0-9.]+)/);
+
+          if ((nameMatch && nameMatch[1]) || (translatedNameMatch && translatedNameMatch[1])) {
+            tempIngredients.push({
+              name: (nameMatch && nameMatch[1]) || (translatedNameMatch && translatedNameMatch[1]) || "Unknown",
+              isVegan: statusMatch ? statusMatch[1] === 'vegansk' : false,
+              isUncertain: statusMatch ? statusMatch[1] === 'osäker' : true,
+              confidence: confidenceMatch ? parseFloat(confidenceMatch[1]) : 0.5
+            });
+          }
+        });
+
+        if (tempIngredients.length > 0) {
+          result.ingredients = tempIngredients;
+          logger.debug(`Extracted ${tempIngredients.length} ingredients using Gemini format regex`);
+        }
+      }
+
+      // Try to extract overall status
+      const overallStatusMatch = text.match(/"overallStatus"\s*:\s*"([^"]*)"/);
+      if (overallStatusMatch && overallStatusMatch[1]) {
+        result.isVegan = overallStatusMatch[1] === 'sannolikt vegansk';
+        result.isUncertain = overallStatusMatch[1] === 'oklart';
+      }
+
+      const overallConfidenceMatch = text.match(/"overallConfidence"\s*:\s*([0-9.]+)/);
+      if (overallConfidenceMatch && !isNaN(parseFloat(overallConfidenceMatch[1]))) {
+        result.confidence = parseFloat(overallConfidenceMatch[1]);
+      }
+
+      // If we found ingredients in Gemini format, return early
+      if (result.ingredients.length > 0) {
+        return result;
+      }
+    }
+
+    // If Gemini format wasn't found, try regular ingredients array pattern
     const ingredientsMatch = text.match(/"ingredients"\s*:\s*\[([\s\S]*?)\]/);
     if (ingredientsMatch && ingredientsMatch[1]) {
       const ingredientObjectsText = ingredientsMatch[1];
@@ -483,13 +691,16 @@ export class VideoAnalysisService {
         });
       }
     } else {
-        // Fallback: If no "ingredients": [...] structure found, try extracting from general text
+        // Fallback: If no structured data found, try extracting from general text
         // (Using simplified logic from original extractIngredientsFromText)
         const items = text.split(/[,.;:\n()\/]+/);
         for (const item of items) {
             const trimmedItem = item.trim();
              if (trimmedItem.length > 2 && !/^\d+$/.test(trimmedItem) && !trimmedItem.toLowerCase().includes('ingredient')) {
-                 const isVeganGuess = !(trimmedItem.toLowerCase().includes('mjölk') || trimmedItem.toLowerCase().includes('ägg')); // Very basic guess
+                 const isVeganGuess = !(trimmedItem.toLowerCase().includes('mjölk') || 
+                                        trimmedItem.toLowerCase().includes('ägg') || 
+                                        trimmedItem.toLowerCase().includes('grädde') ||
+                                        trimmedItem.toLowerCase().includes('ost'));
                  result.ingredients.push({
                     name: trimmedItem,
                     isVegan: isVeganGuess,
@@ -732,7 +943,7 @@ export class VideoAnalysisService {
     // Collect reasoning for uncertain ingredients (using translated name for clarity)
     const uncertainReasons = args.ingredients
       .filter(ing => ing.status === 'osäker')
-      .map(ing => `${ing.translated_name}: ${ing.reasoning}`); // Use translated name in reason
+      .map(ing => `${ing.translated_name}: ${ing.reasoning || 'Okänd anledning'}`); // Lägg till fallback för saknat reasoning-fält
 
     // Return preliminary structure, status determined later by enhanceAnalysisResult
     return {
@@ -742,6 +953,81 @@ export class VideoAnalysisService {
       confidence: args.overall_confidence,
       uncertainReasons: uncertainReasons,
       reasoning: `AI-bedömning: ${args.product_status}`
+    };
+  }
+  
+  /**
+   * Maps arguments from the extractRecipeData function call to a PRELIMINARY VideoAnalysisResult.
+   * @param args The arguments object from the extractRecipeData function call.
+   * @returns A preliminary VideoAnalysisResult object.
+   */
+  private mapExtractRecipeDataToPreliminaryResult(args: any): VideoAnalysisResult {
+    logger.debug('Mapping extractRecipeData response to preliminary result structure.');
+    
+    // Handle raw ingredient strings from extractRecipeData function
+    const mappedIngredients = args.ingredients.map((ingredient: string) => {
+      // Simple heuristic to determine if an ingredient is likely vegan
+      const nonVeganIndicators = [
+        'mjölk', 'milk', 'cream', 'grädde', 'ägg', 'egg', 'cheese', 'ost', 
+        'honey', 'honung', 'meat', 'kött', 'beef', 'nöt', 'chicken', 'kyckling',
+        'pork', 'fläsk', 'butter', 'smör', 'gelatin', 'fish', 'fisk'
+      ];
+      
+      const containsNonVegan = nonVeganIndicators.some(indicator => 
+        ingredient.toLowerCase().includes(indicator.toLowerCase())
+      );
+      
+      // Check for common uncertain ingredients
+      const uncertainIndicators = [
+        'arom', 'flavor', 'e-number', 'e-nummer', 'emulgator', 'emulsifier',
+        'färgämne', 'coloring', 'tillsats', 'additive'
+      ];
+      
+      const isUncertain = uncertainIndicators.some(indicator => 
+        ingredient.toLowerCase().includes(indicator.toLowerCase())
+      );
+      
+      return {
+        name: ingredient.trim(),
+        isVegan: !containsNonVegan && !isUncertain,
+        isUncertain: isUncertain,
+        confidence: 0.6, // Lower confidence as this is based on heuristics
+      };
+    });
+
+    // Use titles array if available to help determine overall vegan status
+    let overallVeganStatus = true; // Default optimistic
+    let confidence = 0.5;
+    
+    // If any ingredient is non-vegan, the product is non-vegan
+    if (mappedIngredients.some((ing: IngredientAnalysisResult) => ing.isVegan === false && ing.isUncertain !== true)) {
+      overallVeganStatus = false;
+      confidence = 0.7;
+    }
+    // If only uncertain ingredients, mark as uncertain
+    else if (mappedIngredients.some((ing: IngredientAnalysisResult) => ing.isUncertain === true)) {
+      overallVeganStatus = false; // Not definitively vegan
+      confidence = 0.5;
+    }
+    
+    // Look for vegan indicators in titles if available
+    if (args.titles && Array.isArray(args.titles) && args.titles.length > 0) {
+      const veganIndicatorsInTitle = args.titles.some((title: string) => 
+        title.toLowerCase().includes('vegan') || title.toLowerCase().includes('vegansk')
+      );
+      
+      if (veganIndicatorsInTitle) {
+        confidence = Math.min(confidence + 0.2, 0.9); // Boost confidence but cap at 0.9
+      }
+    }
+
+    return {
+      ingredients: mappedIngredients,
+      isVegan: overallVeganStatus,
+      isUncertain: mappedIngredients.some((ing: IngredientAnalysisResult) => ing.isUncertain === true),
+      confidence: confidence,
+      reasoning: 'Baserat på extraherade ingredienser från livsmedelsförpackningen',
+      uncertainReasons: []
     };
   }
   
@@ -860,24 +1146,79 @@ Använd verktyget 'recordIngredientAnalysis' för att returnera resultatet med b
         required: ["ingredients", "instructions", "titles"]
       }
     };
+    
+    // Definiera även den ursprungliga funktionen vi hoppades använda
+    const recordIngredientAnalysisFunction: FunctionDeclaration = {
+      name: "recordIngredientAnalysis",
+      description: "Records analysis of ingredients from a food product to determine vegan status",
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          product_status: {
+            type: SchemaType.STRING,
+            enum: ["sannolikt vegansk", "sannolikt icke-vegansk", "oklart"],
+            description: "The overall vegan status of the product based on ingredient analysis",
+            format: "enum"
+          },
+          overall_confidence: {
+            type: SchemaType.NUMBER,
+            description: "Confidence score (0.0-1.0) for the overall vegan status determination"
+          },
+          ingredients: {
+            type: SchemaType.ARRAY,
+            items: {
+              type: SchemaType.OBJECT,
+              properties: {
+                name: {
+                  type: SchemaType.STRING,
+                  description: "Original ingredient name as shown on the packaging"
+                },
+                translated_name: {
+                  type: SchemaType.STRING,
+                  description: "Ingredient name translated to requested language"
+                },
+                status: {
+                  type: SchemaType.STRING,
+                  enum: ["vegansk", "icke-vegansk", "osäker"],
+                  description: "Vegan status of the individual ingredient",
+                  format: "enum"
+                },
+                reasoning: {
+                  type: SchemaType.STRING,
+                  description: "Reasoning for non-vegan or uncertain status"
+                },
+                confidence: {
+                  type: SchemaType.NUMBER,
+                  description: "Confidence score (0.0-1.0) for this ingredient's status"
+                }
+              },
+              required: ["name", "translated_name", "status", "confidence"]
+            },
+            description: "List of ingredients with their vegan status analysis"
+          }
+        },
+        required: ["product_status", "overall_confidence", "ingredients"]
+      }
+    };
 
-    // Returnera en array med ett FunctionDeclarationsTool-objekt
+    // Returnera en array med båda funktionsdeklarationerna
     return [
       {
-        functionDeclarations: [extractRecipeFunction]
+        functionDeclarations: [recordIngredientAnalysisFunction, extractRecipeFunction]
       }
     ];
   }
 
-  // Säkerställ null-checks på FunctionCalls
-  // Ersätt den nuvarande debutten med en säkrare version:
-  private safetyCheckFunctionCalls(response: any) {
+  /**
+   * Hjälpfunktion som säkerhetskontrollerar function calls
+   */
+  private safetyCheckFunctionCalls(response: any): { functionCalls: any[] | null; firstFunctionCall: any | null; functionCallName: string } {
     // Kontrollera om response.functionCalls är en funktion
     const hasFunctionCalls = response && 
                            typeof response.functionCalls === 'function';
     
-    let functionCalls = null;
-    let firstFunctionCall = null;
+    let functionCalls: any[] | null = null;
+    let firstFunctionCall: any | null = null;
     let functionCallName = 'none';
     
     if (hasFunctionCalls) {
@@ -889,8 +1230,8 @@ Använd verktyget 'recordIngredientAnalysis' för att returnera resultatet med b
             functionCallName = firstFunctionCall.name;
           }
         }
-      } catch (error) {
-        logger.warn('Error accessing function calls', { error: formatErrorMessage(error) });
+      } catch (error: any) {
+        logger.warn('Error accessing function calls', { error: error.message });
       }
     }
     

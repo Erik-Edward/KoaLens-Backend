@@ -1,0 +1,4 @@
+TimeSeries ID,api/request_latencies.consumed_api.ALIGN_SUM.REDUCE_PERCENTILE_95.resource.type="consumed_api" AND metric.type="serviceruntime.googleapis.com/api/request_latencies" AND project="gen-lang-client-0365132841" AND resource.labels.service="generativelanguage.googleapis.com".project_id:gen-lang-client-0365132841
+project_id,gen-lang-client-0365132841
+Mon Apr 07 2025 16:23:00 GMT+0200 (centraleuropeisk sommartid),4.0894464
+Mon Apr 07 2025 16:55:00 GMT+0200 (centraleuropeisk sommartid),4.0894464

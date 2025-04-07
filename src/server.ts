@@ -14,6 +14,9 @@ console.log("--- Server.ts script starting ---");
 // Now import other modules
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import compression from 'compression';
+import { logger } from './utils/logger';
 // import winston from 'winston'; // Remove unused import
 // import path from 'path'; // Remove unused import
 
@@ -52,11 +55,58 @@ dotenv.config();
 // console.log("Supabase client initialized.");
 
 const app = express();
-app.use(cors());
-app.use(express.json({ limit: '50mb' }));
+
+// Configure security with helmet middleware
+app.use(helmet({
+  contentSecurityPolicy: false, // Disable CSP for API server
+  crossOriginEmbedderPolicy: false, // Modify as needed for your use case
+}));
+
+// Enable gzip compression
+app.use(compression());
+
+// Configure CORS with permissive settings
+const corsOptions = {
+  origin: '*', // Allow requests from any origin for API server
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  credentials: true,
+  maxAge: 86400 // Cache CORS preflight for 24 hours
+};
+app.use(cors(corsOptions));
+
+// Add explicit preflight handler for all routes
+app.options('*', (req, res) => {
+  // Set CORS headers for preflight requests
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Max-Age', '86400'); // 24 hours
+  res.sendStatus(200);
+});
+
+// Log CORS settings
+logger.info('CORS configured with settings', { corsOptions });
+
+// Configure Express middleware for JSON and form data
+app.use(express.json({ limit: '50mb' })); // Increased limit for media uploads
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Använd nya API-routes under /api path
 app.use('/api', apiRoutes);
+
+// Lägg till direkta rutter för videoanalys i rot-nivån för att fånga upp anrop från äldre appar
+app.post('/video/analyze-video', (req, res, next) => {
+  logger.info('Anrop till /video/analyze-video (utan /api) - vidarebefordrar till rätt handler');
+  req.url = '/video/analyze-video';
+  apiRoutes(req, res, next);
+});
+
+app.post('/analyze-video', (req, res, next) => {
+  logger.info('Anrop till /analyze-video (utan /api) - vidarebefordrar till rätt handler');
+  req.url = '/analyze-video';
+  apiRoutes(req, res, next);
+});
 
 // Starta schemalagd rensning av tillfälliga filer
 TempFileCleaner.startScheduler();
@@ -68,7 +118,7 @@ TempFileCleaner.startScheduler();
 
 // Instantiate Gemini Client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
-const geminiModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // Use an appropriate Gemini model
+const geminiModel = genAI.getGenerativeModel({ model: "gemini-2.0-flash" }); // Use an appropriate Gemini model
 
 // Define Gemini generation config (adjust as needed)
 const generationConfig: GenerationConfig = {
@@ -501,11 +551,65 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
   } as StandardError);
 });
 
+// Start server
+// Ensure we listen on 0.0.0.0 (all interfaces) for proper Fly.io compatibility
 const PORT_STR = process.env.PORT || '8080';
 const PORT = parseInt(PORT_STR, 10);
+const HOST = '0.0.0.0'; // Explicitly set to 0.0.0.0 for Fly.io
 
-// Explicitly listen on 0.0.0.0 for compatibility with Fly Proxy
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server running on port ${PORT} and host 0.0.0.0`);
-  console.log(`Analysis API (Gemini) available at http://localhost:${PORT}/analyze`); // Updated log
+// Log all environment variables for debugging
+logger.info('Starting server with environment:', {
+  NODE_ENV: process.env.NODE_ENV || 'development',
+  PORT: PORT,
+  HOST: HOST,
+  ENABLE_TEST_ROUTES: process.env.ENABLE_TEST_ROUTES,
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY ? `configured (length: ${process.env.GEMINI_API_KEY.length})` : 'missing'
 });
+
+// Import http module
+const http = require('http');
+
+// Create HTTP server explicitly 
+const server = http.createServer(app);
+
+// Start server with explicit host binding for Fly.io compatibility
+server.listen(PORT, HOST, () => {
+  logger.info(`Server running in ${process.env.NODE_ENV || 'development'} mode`);
+  logger.info(`Server listening on ${HOST}:${PORT}`);
+  
+  // Log URLs that show actual hostname, not localhost
+  logger.info(`Health check available at http://${HOST}:${PORT}/api`);
+  logger.info(`API endpoints available at:`);
+  logger.info(`- http://${HOST}:${PORT}/api/analyze`);
+  logger.info(`- http://${HOST}:${PORT}/api/video/analyze-video`);
+  
+  // Log test routes status
+  if (process.env.NODE_ENV !== 'production' || process.env.ENABLE_TEST_ROUTES === 'true') {
+    logger.info(`Test routes available at http://${HOST}:${PORT}/api/test`);
+  } else {
+    logger.info('Test routes are disabled. Set ENABLE_TEST_ROUTES=true to enable.');
+  }
+});
+
+// Handle server errors
+server.on('error', (error: any) => {
+  if (error.syscall !== 'listen') {
+    throw error;
+  }
+
+  // Handle specific listen errors with friendly messages
+  switch (error.code) {
+    case 'EACCES':
+      logger.error(`Port ${PORT} requires elevated privileges`);
+      process.exit(1);
+      break;
+    case 'EADDRINUSE':
+      logger.error(`Port ${PORT} is already in use`);
+      process.exit(1);
+      break;
+    default:
+      throw error;
+  }
+});
+
+export { app };

@@ -109,7 +109,7 @@ router.get('/test-api-key', (async (_req: Request, res: Response) => {
       message: 'Gemini API key is valid and functioning',
       apiKeyConfigured: apiKeyExists,
       apiKeyLength: apiKeyLength,
-      modelName: process.env.GEMINI_MODEL_NAME || 'gemini-2.5-pro',
+      modelName: process.env.GEMINI_MODEL_NAME || 'gemini-2.0-flash',
       response: result.substring(0, 100) // Just return the first 100 chars for safety
     });
   } catch (error: any) {

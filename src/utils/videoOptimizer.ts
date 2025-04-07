@@ -28,9 +28,27 @@ export class VideoOptimizer {
     try {
       // Use synchronous exec to avoid async constructor issues
       require('child_process').execSync('ffmpeg -version', { stdio: 'ignore' });
+      logger.info('ffmpeg installation verified successfully');
       return true;
     } catch (error) {
-      logger.warn('ffmpeg not found, video optimization will be limited', { error });
+      logger.warn('ffmpeg not found or not executable, video optimization will be limited', { 
+        error: error instanceof Error ? error.message : String(error),
+        path: process.env.PATH
+      });
+      
+      // Second attempt with full path on Linux systems
+      try {
+        if (process.platform === 'linux') {
+          require('child_process').execSync('/usr/bin/ffmpeg -version', { stdio: 'ignore' });
+          logger.info('ffmpeg found in /usr/bin/ffmpeg');
+          return true;
+        }
+      } catch (secondError) {
+        logger.error('Second attempt to locate ffmpeg failed', {
+          error: secondError instanceof Error ? secondError.message : String(secondError)
+        });
+      }
+      
       return false;
     }
   }

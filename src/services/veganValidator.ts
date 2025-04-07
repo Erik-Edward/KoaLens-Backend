@@ -65,10 +65,14 @@ export function fuzzyMatch(input: string, target: string, threshold: number = 0.
  * Hittar bästa matchningen i en uppsättning av strängar
  */
 export function findBestMatch(input: string, targets: Set<string>, isStrict: boolean = false): { match: string | null; similarity: number } {
-  let bestMatch = null;
-  let bestSimilarity = 0;
-
   const normalizedInput = normalizeString(input);
+  let bestMatch: string | null = '';
+  let bestSimilarity = -1;
+
+  // Exact match first (high performance skip)
+  if (targets.has(input) || targets.has(normalizedInput)) {
+    return { match: input, similarity: 1.0 };
+  }
 
   // Om vi letar efter exakta matchningar (för sammansatta ord)
   if (isStrict) {
