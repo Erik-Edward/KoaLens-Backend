@@ -6,6 +6,7 @@ import counterRoutes from './counterRoutes';
 import reportRoutes from './reportRoutes';
 import videoAnalysisRoutes from './videoAnalysis';
 import testGeminiRoutes from './testGemini';
+import ingredientCheckRoutes from './ingredientCheck';
 import { logger } from '../utils/logger';
 import { Request, Response, NextFunction } from 'express';
 
@@ -24,7 +25,8 @@ router.get('/', (_req, res) => {
     endpoints: {
       video: '/video/analyze-video',
       alternateVideo: '/analyze-video',  // New alternate endpoint
-      test: process.env.ENABLE_TEST_ROUTES === 'true' ? '/test' : 'disabled'
+      test: process.env.ENABLE_TEST_ROUTES === 'true' ? '/test' : 'disabled',
+      ingredients: '/ingredients/check-e304'
     }
   });
 });
@@ -47,6 +49,7 @@ logger.info('- /ai (aiRoutes) - AI interaction endpoints');
 logger.info('- /counter (counterRoutes) - Usage counters');
 logger.info('- /reports (reportRoutes) - Reporting functionality');
 logger.info('- /video (videoAnalysisRoutes) - Video analysis endpoints');
+logger.info('- /ingredients (ingredientCheckRoutes) - Ingredient checking endpoints');
 
 // Mount the routes
 router.use('/analyze', analyzeRoutes);
@@ -54,6 +57,7 @@ router.use('/ai', aiRoutes);
 router.use('/counter', counterRoutes);
 router.use('/reports', reportRoutes);
 router.use('/video', videoAnalysisRoutes);
+router.use('/ingredients', ingredientCheckRoutes);
 
 // Add alias route for counters (plural) to match mobile app expectations
 router.use('/counters', counterRoutes);

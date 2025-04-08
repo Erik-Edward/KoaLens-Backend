@@ -117,42 +117,57 @@ export function loadUncertainIngredients(): IngredientData[] {
     logger.info(`[Utils] Attempting to load: ${filePath}`);
     const content = fs.readFileSync(filePath, 'utf8');
     
-    // Split into lines and skip the header row (first line)
-    const rows = content.split('\\n').slice(1).filter(row => row.trim()); 
+    // Debug log the entire file for debugging purposes
+    logger.debug(`[loadUncertainIngredients] Content: ${content}`);
+    
+    // More robust CSV parsing - support both CRLF and LF line endings
+    const lines = content.replace(/\r\n/g, '\n').split('\n');
+    const rows = lines.filter(row => row.trim() && !row.startsWith('"name,e_number'));
+    
+    logger.info(`[loadUncertainIngredients] Found ${rows.length} total rows in uncertain.csv`);
+    
     const ingredients: IngredientData[] = [];
     
-    for (let i = 0; i < rows.length; i++) { // Use index for logging line number
+    for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
-      const fields = row.split(','); // Split by comma
+      // More robust CSV parsing - handle quotes correctly
+      const fields = row.split(',').map(field => field.replace(/^"|"$/g, '').trim());
 
-      // Expect exactly 3 fields after splitting
-      if (fields.length === 3) { 
-          // Remove surrounding quotes and trim whitespace from each field
-          const name = fields[0].replace(/^\"|\"$/g, '').trim();
-          const eNumber = fields[1].replace(/^\"|\"$/g, '').trim(); 
-          const description = fields[2].replace(/^\"|\"$/g, '').trim();
+      if (fields.length >= 3) {
+        const name = fields[0];
+        const eNumber = fields[1];
+        const description = fields[2];
 
-          if (name) { // Ensure name is not empty
-              ingredients.push({ 
-                  name, 
-                  eNumber: eNumber || undefined, // Store as undefined if empty
-                  description: description || undefined // Store as undefined if empty
-              });
-          } else {
-               // Log warning for rows with empty name field (add 2 to index: 1 for 0-based, 1 for skipped header)
-               logger.warn(`Skipping row with empty name in uncertain.csv (line ${i + 2}): ${row}`); 
-          }
+        // Special handling for E304 to debug
+        if (eNumber === 'E304') {
+          logger.info(`[loadUncertainIngredients] Found E304 in uncertain.csv: ${name}, ${eNumber}, ${description}`);
+        }
+
+        if (name) {
+          ingredients.push({
+            name,
+            eNumber: eNumber || undefined,
+            description: description || undefined
+          });
+        } else {
+          logger.warn(`Skipping row with empty name in uncertain.csv: ${row}`);
+        }
       } else {
-          // Log warning for rows that don't have exactly 3 fields (add 2 to index)
-          logger.warn(`Skipping invalid row in uncertain.csv (line ${i + 2}) - expected 3 fields, got ${fields.length}: ${row}`); 
+        logger.warn(`Skipping invalid row in uncertain.csv - expected at least 3 fields, got ${fields.length}: ${row}`);
       }
     }
+    
+    // Log all ingredients with E-numbers for debugging
+    const eNumberIngredients = ingredients.filter(ing => ing.eNumber);
+    logger.info(`[loadUncertainIngredients] Loaded ${eNumberIngredients.length} ingredients with E-numbers`);
+    eNumberIngredients.forEach(ing => {
+      logger.debug(`  - ${ing.name}: ${ing.eNumber}`);
+    });
     
     uncertainCache = ingredients;
     logger.info(`Loaded ${ingredients.length} uncertain ingredients from database`);
     return ingredients;
   } catch (error) {
-    // Log detailed error, including the type of error if possible
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error(`Failed to load uncertain ingredients database: ${errorMessage}`, { error });
     return [];
@@ -215,6 +230,12 @@ export function checkIngredientStatus(ingredientName: string): {
   reason?: string,
   matchedItem?: IngredientData // Add matched item for better reasoning
 } {
+  // Add debug for E304 - for testing the issue
+  const isE304Check = ingredientName.toUpperCase().includes('E304');
+  if (isE304Check) {
+    logger.info(`[checkIngredientStatus] Checking E304 ingredient: ${ingredientName}`);
+  }
+  
   // Normalisera namn för jämförelse
   const normalizedName = ingredientName.toLowerCase().trim();
   
@@ -224,12 +245,23 @@ export function checkIngredientStatus(ingredientName: string): {
   
   if (eNumberMatch) {
     eNumber = `E${eNumberMatch[1].toUpperCase()}`; // Normalize E-number format
+    
+    // Add debug for E304
+    if (eNumber === 'E304') {
+      logger.info(`[checkIngredientStatus] Detected E304 in pattern matching: ${ingredientName} => ${eNumber}`);
+    }
   }
   
   // Ladda databaser (cache hanteras inuti funktionerna)
   const nonVeganList = loadNonVeganIngredients();
   const uncertainList = loadUncertainIngredients();
   const veganList = loadVeganIngredients(); // Ladda nya veganska listan
+  
+  // DEBUG: For E304 testing, log the uncertain list
+  if (isE304Check) {
+    const e304InUncertain = uncertainList.find(item => item.eNumber === 'E304');
+    logger.info(`[checkIngredientStatus] E304 found in uncertain list: ${!!e304InUncertain}, details: ${JSON.stringify(e304InUncertain)}`);
+  }
   
   // 1. Kontrollera om ingrediensen är känd icke-vegansk
   const nonVeganMatch = nonVeganList.find(item => 
@@ -238,6 +270,9 @@ export function checkIngredientStatus(ingredientName: string): {
   );
   
   if (nonVeganMatch) {
+    if (isE304Check) {
+      logger.info(`[checkIngredientStatus] E304 matched as non-vegan: ${JSON.stringify(nonVeganMatch)}`);
+    }
     return { 
       isVegan: false, 
       isUncertain: false,
@@ -253,6 +288,9 @@ export function checkIngredientStatus(ingredientName: string): {
   );
   
   if (uncertainMatch) {
+    if (isE304Check) {
+      logger.info(`[checkIngredientStatus] E304 matched as uncertain: ${JSON.stringify(uncertainMatch)}`);
+    }
     return { 
       isVegan: null, // Explicitly null as it's not confirmed either way
       isUncertain: true,
@@ -268,6 +306,9 @@ export function checkIngredientStatus(ingredientName: string): {
   );
 
   if (veganMatch) {
+    if (isE304Check) {
+      logger.info(`[checkIngredientStatus] E304 matched as vegan: ${JSON.stringify(veganMatch)}`);
+    }
     return {
       isVegan: true,
       isUncertain: false,
@@ -277,6 +318,9 @@ export function checkIngredientStatus(ingredientName: string): {
   }
   
   // Okänd status - ingen match i någon lista
+  if (isE304Check) {
+    logger.info(`[checkIngredientStatus] E304 not matched in any list`);
+  }
   return { isVegan: null, isUncertain: false };
 }
 
@@ -324,4 +368,4 @@ function getLanguageIndex(lang: string): number {
 // Initialisera databaserna vid start
 loadNonVeganIngredients();
 loadUncertainIngredients();
-loadVeganIngredients(); // Ladda veganska listan vid start 
+loadVeganIngredients(); // Ladda veganska listan vid start

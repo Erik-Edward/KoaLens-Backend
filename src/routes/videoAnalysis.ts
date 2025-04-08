@@ -1,6 +1,7 @@
 import { Router, Request, Response, RequestHandler } from 'express';
 import { logger } from '../utils/logger';
 import videoAnalysisService from '../services/videoAnalysisService';
+import { checkIngredientStatus } from "../utils/ingredientsDatabase";
 
 // Local type definition for request
 interface MediaAnalysisRequest {
@@ -232,13 +233,13 @@ async function processVideoAnalysisRequest(req: Request, res: Response): Promise
       isUncertain: result.isUncertain || false,
       confidence: result.confidence,
       // Add an explicit status field that simplifies UI display logic
-      status: result.isVegan 
-        ? 'vegansk' 
-        : (result.isUncertain ? 'osäker' : 'icke-vegansk'),
+      status: !result.isVegan && !result.isUncertain 
+        ? 'icke-vegansk' 
+        : (result.isVegan ? 'vegansk' : 'osäker'),
       // Explicit color codes for UI to use
-      statusColor: result.isVegan 
-        ? 'green' 
-        : (result.isUncertain ? 'orange' : 'red'),
+      statusColor: !result.isVegan && !result.isUncertain 
+        ? 'red' 
+        : (result.isVegan ? 'green' : 'orange'),
       // Provide color-coded ingredient list to simplify UI rendering
       ingredientList: result.ingredients.map(ingredient => ingredient.name),
       // Add status-color-coded ingredients for UI rendering
@@ -260,12 +261,15 @@ async function processVideoAnalysisRequest(req: Request, res: Response): Promise
             ? `Ingrediensen "${ingredient.name}" är vegansk.` 
             : `Ingrediensen "${ingredient.name}" är inte vegansk.`
       })),
+      // Changed from watchedIngredients to make it more explicit
+      // This is the list that frontend uses for coloring and status display
       watchedIngredients: result.ingredients
         .filter(ingredient => !ingredient.isVegan || ingredient.isUncertain)
         .map(ingredient => ({ 
           name: ingredient.name, 
           status: ingredient.isUncertain ? 'uncertain' : 'non-vegan',
           statusColor: ingredient.isUncertain ? 'orange' : 'red',
+          reason: ingredient.isUncertain ? 'uncertain' : 'non-vegan', // Add reason field for frontend
           description: ingredient.isUncertain 
             ? `Ingrediensen "${ingredient.name}" kan vara vegansk eller icke-vegansk.`
             : `Ingrediensen "${ingredient.name}" är inte vegansk.`
@@ -536,5 +540,36 @@ router.post('/ingredients/suggest', (async (req: Request, res: Response) => {
     });
   }
 }) as RequestHandler);
+
+/**
+ * Test endpoint to check E304 directly - for debugging
+ */
+router.get("/test-e304", (req: Request, res: Response) => {
+  try {
+    const ingredientName = "E304";
+    const status = checkIngredientStatus(ingredientName);
+    
+    // Also try lowercase
+    const lowercaseStatus = checkIngredientStatus(ingredientName.toLowerCase());
+    
+    const response = {
+      message: "E304 check completed, see logs for details",
+      e304Result: status,
+      e304LowercaseResult: lowercaseStatus,
+      comparison: {
+        original: ingredientName,
+        lowercase: ingredientName.toLowerCase(),
+        areEqual: status === lowercaseStatus
+      }
+    };
+    
+    logger.info("E304 Test:", response);
+    
+    res.status(200).json(response);
+  } catch (error) {
+    logger.error("Error testing E304:", error);
+    res.status(500).json({ error: "Internal server error testing E304" });
+  }
+});
 
 export default router; 
