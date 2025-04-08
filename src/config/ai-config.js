@@ -13,15 +13,15 @@ const GEMINI_CONFIG = {
 };
 
 // Keep Claude config for backward compatibility but it will not be used
-const CLAUDE_CONFIG = {
-  apiKey: process.env.ANTHROPIC_API_KEY || '',
-  modelName: process.env.CLAUDE_MODEL_NAME || 'claude-3-sonnet-20240229',
-  maxTokens: parseInt(process.env.CLAUDE_MAX_TOKENS || '2048', 10),
-  temperature: parseFloat(process.env.CLAUDE_TEMPERATURE || '0.5'),
-};
+// const CLAUDE_CONFIG = {
+//   apiKey: process.env.ANTHROPIC_API_KEY || '',
+//   modelName: process.env.CLAUDE_MODEL_NAME || 'claude-3-sonnet-20240229',
+//   maxTokens: parseInt(process.env.CLAUDE_MAX_TOKENS || '2048', 10),
+//   temperature: parseFloat(process.env.CLAUDE_TEMPERATURE || '0.5'),
+// };
 
 module.exports = {
   provider: AI_PROVIDER,
   gemini: GEMINI_CONFIG,
-  claude: CLAUDE_CONFIG,
+  // claude: CLAUDE_CONFIG, // REMOVED
 };

@@ -11,12 +11,12 @@ declare const config: {
     topK: number;
     topP: number;
   };
-  claude: {
-    apiKey: string;
-    modelName: string;
-    maxTokens: number;
-    temperature: number;
-  };
+  // claude: {
+  //   apiKey: string;
+  //   modelName: string;
+  //   maxTokens: number;
+  //   temperature: number;
+  // }; // REMOVED
 };
 
 export default config;

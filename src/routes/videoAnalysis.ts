@@ -231,25 +231,57 @@ async function processVideoAnalysisRequest(req: Request, res: Response): Promise
       isVegan: result.isVegan,
       isUncertain: result.isUncertain || false,
       confidence: result.confidence,
-      // ingredientList now uses the translated names directly from the service
-      ingredientList: result.ingredients.map(ingredient => ingredient.name), 
+      // Add an explicit status field that simplifies UI display logic
+      status: result.isVegan 
+        ? 'vegansk' 
+        : (result.isUncertain ? 'osäker' : 'icke-vegansk'),
+      // Explicit color codes for UI to use
+      statusColor: result.isVegan 
+        ? 'green' 
+        : (result.isUncertain ? 'orange' : 'red'),
+      // Provide color-coded ingredient list to simplify UI rendering
+      ingredientList: result.ingredients.map(ingredient => ingredient.name),
+      // Add status-color-coded ingredients for UI rendering
+      ingredientsWithStatus: result.ingredients.map(ingredient => ({
+        name: ingredient.name,
+        isVegan: ingredient.isVegan,
+        isUncertain: ingredient.isUncertain,
+        // Explicit status for each ingredient
+        status: ingredient.isVegan 
+          ? 'vegan' 
+          : (ingredient.isUncertain ? 'uncertain' : 'non-vegan'),
+        // Color code for frontend rendering
+        statusColor: ingredient.isVegan 
+          ? 'green' 
+          : (ingredient.isUncertain ? 'orange' : 'red'),
+        description: ingredient.isUncertain 
+          ? `Ingrediensen "${ingredient.name}" kan vara vegansk eller icke-vegansk.`
+          : ingredient.isVegan 
+            ? `Ingrediensen "${ingredient.name}" är vegansk.` 
+            : `Ingrediensen "${ingredient.name}" är inte vegansk.`
+      })),
       watchedIngredients: result.ingredients
         .filter(ingredient => !ingredient.isVegan || ingredient.isUncertain)
         .map(ingredient => ({ 
-          // Use the (already translated) name from the result
           name: ingredient.name, 
           status: ingredient.isUncertain ? 'uncertain' : 'non-vegan',
-          // Description can remain as is, it uses the name directly
+          statusColor: ingredient.isUncertain ? 'orange' : 'red',
           description: ingredient.isUncertain 
             ? `Ingrediensen "${ingredient.name}" kan vara vegansk eller icke-vegansk.`
             : `Ingrediensen "${ingredient.name}" är inte vegansk.`
         })),
+      // Gruppera explicitt per status
+      veganIngredients: result.ingredients
+        .filter(ingredient => ingredient.isVegan)
+        .map(ingredient => ingredient.name),
       nonVeganIngredients: result.ingredients
         .filter(ingredient => !ingredient.isVegan && !ingredient.isUncertain)
-        .map(ingredient => ingredient.name), // Use translated name
+        .map(ingredient => ingredient.name),
       uncertainIngredients: result.ingredients
         .filter(ingredient => ingredient.isUncertain)
-        .map(ingredient => ingredient.name), // Use translated name
+        .map(ingredient => ingredient.name),
+      // Lägg till information om problemingrediens som orsakar "Ej vegansk" status
+      problemIngredient: result.ingredients.find(ingredient => !ingredient.isVegan && !ingredient.isUncertain)?.name || null,
       uncertainReasons: result.uncertainReasons || [],
       reasoning: result.reasoning || ''
     };
@@ -272,7 +304,13 @@ async function processVideoAnalysisRequest(req: Request, res: Response): Promise
         result: transformedResult
       }),
       isVegan: transformedResult.isVegan,
-      ingredientList: transformedResult.ingredientList?.length || 0,
+      isUncertain: transformedResult.isUncertain,
+      status: transformedResult.status,
+      ingredientCount: transformedResult.ingredientList?.length || 0,
+      veganCount: transformedResult.veganIngredients?.length || 0,
+      nonVeganCount: transformedResult.nonVeganIngredients?.length || 0, 
+      uncertainCount: transformedResult.uncertainIngredients?.length || 0,
+      problemIngredient: transformedResult.problemIngredient,
       confidence: transformedResult.confidence
     });
     

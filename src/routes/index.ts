@@ -29,6 +29,17 @@ router.get('/', (_req, res) => {
   });
 });
 
+// Add an explicit /health endpoint to match mobile app expectations
+router.get('/health', (_req, res) => {
+  logger.info('Health check endpoint accessed');
+  res.json({
+    status: 'ok',
+    message: 'KoaLens API is operational',
+    timestamp: new Date().toISOString(),
+    version: '1.1.0'
+  });
+});
+
 // Enhanced logging for mounted routes
 logger.info('Mounting KoaLens API routes:');
 logger.info('- /analyze (analyzeRoutes) - Legacy analyze endpoints');
@@ -69,11 +80,11 @@ if (process.env.NODE_ENV !== 'production' || process.env.ENABLE_TEST_ROUTES === 
   router.use('/test', testGeminiRoutes);
   
   // Add test route aliases for better discoverability
-  router.get('/api-status', (req, res) => {
+  router.get('/api-status', (_req, res) => {
     res.redirect('/test/test-api-key');
   });
   
-  router.get('/video-test', (req, res) => {
+  router.get('/video-test', (_req, res) => {
     res.redirect('/test/test-video-processing');
   });
 } else {
@@ -87,6 +98,14 @@ logger.info('Environment settings:', {
   GEMINI_API_KEY: process.env.GEMINI_API_KEY ? 'configured (length: ' + process.env.GEMINI_API_KEY.length + ')' : 'NOT CONFIGURED',
   GEMINI_MODEL_NAME: process.env.GEMINI_MODEL_NAME || 'default model',
   routesEnabled: (process.env.NODE_ENV !== 'production' || process.env.ENABLE_TEST_ROUTES === 'true')
+});
+
+// Placeholder for /api/account routes (if needed)
+router.get('/account', (_req, res) => { // Prefixed req
+  res.json({ message: 'Account endpoint placeholder' });
+});
+router.post('/account', (_req, res) => { // Prefixed req
+  res.json({ message: 'Account endpoint placeholder' });
 });
 
 // Improved fallback for catch-all route with better diagnostics

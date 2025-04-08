@@ -93,18 +93,24 @@ export class VideoOptimizer {
       
       // Choose optimization strategy based on file size
       if (fileSizeMB > 50) {
-        // Heavy optimization for large files
-        ffmpegCommand = `ffmpeg -y -i "${inputPath}" -vf "scale=480:-2" -c:v libx264 -crf 28 -preset faster -c:a aac -b:a 64k -movflags +faststart "${outputPath}"`;
-        logger.debug('Using heavy optimization for large video');
+        // Heavy optimization for large files - ULTRAFAST preset for maximum speed
+        ffmpegCommand = `ffmpeg -y -i "${inputPath}" -vf "scale=360:-2" -c:v libx264 -crf 30 -preset ultrafast -tune fastdecode -c:a aac -b:a 32k -movflags +faststart -threads 0 "${outputPath}"`;
+        logger.debug('Using heavy optimization with ultrafast preset for large video');
       } else if (fileSizeMB > 20) {
-        // Medium optimization for medium files
-        ffmpegCommand = `ffmpeg -y -i "${inputPath}" -vf "scale=720:-2" -c:v libx264 -crf 24 -preset medium -c:a aac -b:a 96k -movflags +faststart "${outputPath}"`;
-        logger.debug('Using medium optimization for medium-sized video');
+        // Medium optimization for medium files - VERYFAST preset for better balance
+        ffmpegCommand = `ffmpeg -y -i "${inputPath}" -vf "scale=480:-2" -c:v libx264 -crf 28 -preset veryfast -tune fastdecode -c:a aac -b:a 64k -movflags +faststart -threads 0 "${outputPath}"`;
+        logger.debug('Using medium optimization with veryfast preset for medium-sized video');
+      } else if (fileSizeMB > 8) {
+        // Light optimization for smaller files - FASTER preset
+        ffmpegCommand = `ffmpeg -y -i "${inputPath}" -vf "scale=640:-2" -c:v libx264 -crf 26 -preset faster -c:a aac -b:a 96k -movflags +faststart -threads 0 "${outputPath}"`;
+        logger.debug('Using light optimization with faster preset for smaller video');
       } else {
-        // Light optimization for small files
-        ffmpegCommand = `ffmpeg -y -i "${inputPath}" -c:v libx264 -crf 22 -preset medium -c:a copy -movflags +faststart "${outputPath}"`;
-        logger.debug('Using light optimization for small video');
+        // Very light optimization for tiny files but still keep it FAST
+        ffmpegCommand = `ffmpeg -y -i "${inputPath}" -c:v libx264 -crf 23 -preset veryfast -c:a copy -movflags +faststart -threads 0 "${outputPath}"`;
+        logger.debug('Using minimal optimization with veryfast preset for very small video');
       }
+      
+      logger.debug('Executing ffmpeg command', { command: ffmpegCommand });
       
       // Execute ffmpeg command
       await execAsync(ffmpegCommand);
@@ -133,6 +139,66 @@ export class VideoOptimizer {
       });
       
       // Return original path if optimization fails
+      return inputPath;
+    }
+  }
+  
+  /**
+   * Optimera video med minimal omarbetning
+   * Utformad för maximal hastighet med acceptabel kompression
+   * 
+   * @param inputPath Sökväg till indatavideo
+   * @param outputPath Sökväg till utdatavideo
+   * @returns Sökväg till optimerad video eller original vid fel
+   */
+  async optimizeFast(inputPath: string, outputPath: string): Promise<string> {
+    if (!this.ffmpegInstalled) {
+      logger.warn('Cannot optimize video: ffmpeg not available');
+      return inputPath;
+    }
+    
+    try {
+      if (!fs.existsSync(inputPath)) {
+        throw new Error(`Input file does not exist: ${inputPath}`);
+      }
+      
+      // Ultra fast optimization focused on speed
+      const ffmpegCommand = `ffmpeg -y -i "${inputPath}" -vf "scale=480:-2" -c:v libx264 -crf 30 -preset ultrafast -tune zerolatency -an -movflags +faststart -threads 0 "${outputPath}"`;
+      
+      logger.debug('Starting FAST video optimization', { 
+        inputPath,
+        command: ffmpegCommand
+      });
+      
+      // Execute ffmpeg command
+      await execAsync(ffmpegCommand);
+      
+      // Verify output
+      if (!fs.existsSync(outputPath) || fs.statSync(outputPath).size === 0) {
+        throw new Error('Fast optimization failed: output file is empty or does not exist');
+      }
+      
+      // Calculate compression stats
+      const stats = fs.statSync(inputPath);
+      const outputStats = fs.statSync(outputPath);
+      const fileSizeMB = stats.size / (1024 * 1024);
+      const outputSizeMB = outputStats.size / (1024 * 1024);
+      const compressionRatio = fileSizeMB / outputSizeMB;
+      
+      logger.info('Fast video optimization completed', {
+        originalSizeMB: fileSizeMB.toFixed(2),
+        optimizedSizeMB: outputSizeMB.toFixed(2),
+        compressionRatio: compressionRatio.toFixed(2),
+        method: 'fast'
+      });
+      
+      return outputPath;
+    } catch (error: any) {
+      logger.error('Fast video optimization failed', { 
+        error: error.message,
+        inputPath
+      });
+      
       return inputPath;
     }
   }

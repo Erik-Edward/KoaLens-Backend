@@ -29,7 +29,6 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.33.1",
     "@google/generative-ai": "^0.24.0",
     "@supabase/supabase-js": "^2.49.1",
     "@types/cors": "^2.8.17",

@@ -4,7 +4,6 @@ import os from 'os';
 import { VideoOptimizer } from '../utils/videoOptimizer';
 import geminiService from './geminiService';
 import { logger } from '../utils/logger';
-import { v4 as uuidv4 } from 'uuid';
 import { checkIngredientStatus } from '../utils/ingredientsDatabase';
 import { z } from 'zod';
 import {
@@ -72,6 +71,21 @@ export interface Ingredient {
   isUncertain?: boolean;
 }
 
+// Module-level variable to track first analysis run
+let _isFirstRun = true;
+
+/**
+ * Helper function to track first analysis run
+ * Uses module-level variable to avoid state maintained in instance
+ */
+function isFirstAnalysisRun(): boolean {
+  if (_isFirstRun) {
+    _isFirstRun = false;
+    return true;
+  }
+  return false;
+}
+
 /**
  * Service class to handle video analysis using Gemini
  * Manages temporary storage, optimization, and analysis of video files
@@ -126,8 +140,9 @@ export class VideoAnalysisService {
   async analyzeVideo(
     base64Data: string, 
     mimeType: string,
-    preferredLanguage: string = 'en'
+    preferredLanguage: string = 'sv'
   ): Promise<VideoAnalysisResult> {
+    const startTime = Date.now();
     logger.info('Video analysis request received', {
       dataSize: base64Data.length,
       mimeType,
@@ -159,20 +174,42 @@ export class VideoAnalysisService {
         throw new Error('Gemini API key is not configured. Video analysis is unavailable.');
       }
       
-      // Check video size
+      // OPTIMIZATION: Check video size and recommend smaller size if too large
       const videoSizeBytes = Buffer.from(base64Data, 'base64').length;
+      const videoSizeMB = videoSizeBytes / (1024 * 1024);
       if (videoSizeBytes > this.maxVideoSizeBytes * 4) { // 4x buffer because we can optimize
         logger.warn('Video size exceeds maximum allowed size', { 
           videoSizeBytes,
           maxVideoSizeBytes: this.maxVideoSizeBytes * 4
         });
         throw new Error(`Video size exceeds maximum allowed size (${Math.round(this.maxVideoSizeBytes * 4 / (1024 * 1024))}MB)`);
+      } else if (videoSizeMB > 10) {
+        // If video is large but acceptable, log recommendation for future optimization
+        logger.warn('Video is large, future optimizations should reduce size for faster processing', {
+          videoSizeMB: Math.round(videoSizeMB * 10) / 10
+        });
       }
       
-      // Save video to temp file
-      const videoId = uuidv4();
+      // PERFORMANCE: Skip heavy optimization for smaller videos
+      const isSmallVideo = videoSizeMB < 6; // Skip optimization for videos under 6MB (tidigare 3MB)
+      if (isSmallVideo) {
+        logger.info('Skipping optimization for small video', { videoSizeMB });
+        useOriginalVideo = true;
+      }
+      
+      // OPTIMIZATION: Use a more efficient ID generation for better performance
+      const videoId = Date.now().toString(36) + Math.random().toString(36).substring(2, 7);
       tempVideoPath = path.join(this.tempDir, `${videoId}-original.${this.getFileExtension(mimeType)}`);
       const buffer = Buffer.from(base64Data, 'base64');
+      
+      // OPTIMIZATION: Fire-and-forget file cleanup after 30 minutes to handle edge cases
+      setTimeout(() => {
+        try {
+          this.cleanupTempFiles(tempVideoPath, optimizedVideoPath);
+        } catch (e) {
+          // Ignore errors in delayed cleanup
+        }
+      }, 30 * 60 * 1000);
       
       try {
         fs.writeFileSync(tempVideoPath, buffer);
@@ -188,76 +225,139 @@ export class VideoAnalysisService {
         useOriginalVideo = true;
       }
       
-      // Optimize video if possible and if we could save the temp file
-      optimizedVideoPath = tempVideoPath;
-      if (!useOriginalVideo) {
-        try {
-          logger.debug('Starting video optimization');
-          if (!this.videoOptimizer.isFfmpegInstalled()) {
-            logger.warn('FFMPEG not installed, skipping optimization and using original video');
-            useOriginalVideo = true;
-          } else {
-            optimizedVideoPath = await this.videoOptimizer.optimize(
-              tempVideoPath, 
-              path.join(this.tempDir, `${videoId}-optimized.mp4`)
-            );
-            logger.debug('Video optimization completed', { 
-              optimizedVideoPath,
-              originalPath: tempVideoPath 
-            });
-          }
-        } catch (error: any) {
-          logger.error('Video optimization failed, will use original video', { 
-            error: error.message 
-          });
-          useOriginalVideo = true;
-          // Continue with original video
+      // OPTIMIZATION: Process in parallel - start with original and optimize in background
+      let videoOptimizationPromise: Promise<string> | null = null;
+      
+      // Start video optimization in parallel if needed (non-small videos)
+      if (!useOriginalVideo && !isSmallVideo) {
+        // OPTIMIZATION: Aggressively optimize video if size is larger than 5MB
+        let targetResolution = '360p'; // Default modest resolution
+        if (videoSizeMB > 5) {
+          targetResolution = '240p'; // More aggressive for larger videos
+          logger.info('Using aggressive video optimization for large video', { videoSizeMB, targetResolution });
         }
+        
+        // Start optimization in background
+        videoOptimizationPromise = (async () => {
+          try {
+            if (!this.videoOptimizer.isFfmpegInstalled()) {
+              logger.warn('FFMPEG not installed, skipping optimization and using original video');
+              return base64Data;
+            }
+            
+            logger.debug('Starting video optimization in background');
+            
+            // Välj optimeringsmetod baserat på filstorlek
+            let optimizedPath;
+            
+            // Använd snabb optimering för mellanstor video (6-20MB)
+            if (videoSizeMB > 6 && videoSizeMB <= 20) {
+              logger.info('Using FAST optimization method for medium video', { videoSizeMB });
+              optimizedPath = await this.videoOptimizer.optimizeFast(
+                tempVideoPath, 
+                path.join(this.tempDir, `${videoId}-optimized-fast.mp4`)
+              );
+            } else {
+              // Standard optimering för stora videos (>20MB)
+              optimizedPath = await this.videoOptimizer.optimize(
+                tempVideoPath, 
+                path.join(this.tempDir, `${videoId}-optimized.mp4`)
+              );
+            }
+            
+            optimizedVideoPath = optimizedPath;
+            
+            // Log compression ratio
+            try {
+              const optimizedStats = fs.statSync(optimizedPath);
+              const originalStats = fs.statSync(tempVideoPath);
+              const compressionRatio = (originalStats.size / optimizedStats.size).toFixed(2);
+              const originalSizeMB = (originalStats.size / (1024 * 1024)).toFixed(2);
+              const optimizedSizeMB = (optimizedStats.size / (1024 * 1024)).toFixed(2);
+              
+              logger.info('Video optimization completed', { 
+                compressionRatio,
+                originalSizeMB,
+                optimizedSizeMB
+              });
+            } catch (statError) {
+              logger.debug('Could not calculate compression stats', { 
+                error: statError instanceof Error ? statError.message : String(statError)
+              });
+            }
+            
+            // Read and return the optimized video in base64
+            try {
+              const optimizedBuffer = fs.readFileSync(optimizedPath);
+              return optimizedBuffer.toString('base64');
+            } catch (readError) {
+              logger.error('Failed to read optimized video, falling back to original', {
+                error: readError instanceof Error ? readError.message : String(readError)
+              });
+              return base64Data;
+            }
+          } catch (error: any) {
+            logger.error('Video optimization failed, will use original video', { 
+              error: error.message 
+            });
+            return base64Data;
+          }
+        })();
       }
       
-      // Get the video data for analysis - either optimized or original
+      // While optimization is running in background, prepare prompt and other data
+      
+      // OPTIMIZATION: Use different prompts based on video size for better performance
+      const prompt = videoSizeMB > 8
+        ? this.buildCompactAnalysisPrompt(preferredLanguage) // More compact prompt for larger videos
+        : this.buildAnalysisPrompt();      // Standard detailed prompt
+      
+      // Create function declarations for Gemini
+      const functionDeclarations = this.createFunctionDeclarations();
+      
+      // Determine which video to use - use race condition to process as early as possible
       let videoForAnalysis: string;
-      if (useOriginalVideo) {
-        logger.info('Using original unoptimized video for analysis');
+      
+      if (useOriginalVideo || isSmallVideo) {
         videoForAnalysis = base64Data;
+        logger.info('Using original video for analysis (skipped optimization)', { 
+          useOriginalVideo,
+          isSmallVideo
+        });
       } else {
-        // Read the optimized video file
+        // Wait for the optimization to complete or timeout
         try {
-          const optimizedBuffer = fs.readFileSync(optimizedVideoPath);
-          videoForAnalysis = optimizedBuffer.toString('base64');
-        } catch (readError) {
-          logger.error('Failed to read optimized video, falling back to original', {
-            error: readError instanceof Error ? readError.message : String(readError)
+          // Set a timeout to ensure we don't wait too long for optimization
+          const timeoutPromise = new Promise<string>((resolve) => {
+            setTimeout(() => {
+              logger.warn('Video optimization timed out, using original video');
+              resolve(base64Data);
+            }, 8000); // 8 second timeout (tidigare 10 sekunder)
+          });
+          
+          // Race between optimization and timeout
+          videoForAnalysis = await Promise.race([
+            videoOptimizationPromise as Promise<string>,
+            timeoutPromise
+          ]);
+        } catch (error) {
+          logger.warn('Error waiting for video optimization, using original video', {
+            error: error instanceof Error ? error.message : String(error)
           });
           videoForAnalysis = base64Data;
         }
       }
       
-      logger.debug('Analysis metadata', {
-        originalVideoFileSize: base64Data.length,
-        tempVideoFileSize: fs.existsSync(tempVideoPath) ? fs.statSync(tempVideoPath).size : 0,
-        optimizedVideoFileSize: fs.existsSync(optimizedVideoPath) ? fs.statSync(optimizedVideoPath).size : 0,
-        originalMimeType: mimeType,
-        tempFilePath: tempVideoPath,
-        optimizedFilePath: optimizedVideoPath,
-        optimizedFileCreated: !!optimizedVideoPath && optimizedVideoPath !== tempVideoPath && fs.existsSync(optimizedVideoPath),
-        apiKeyConfigured: !!process.env.GEMINI_API_KEY,
-        ffmpegInstalled: this.videoOptimizer.isFfmpegInstalled(),
-        useOriginalVideo: useOriginalVideo
-      });
-      
-      // Create a prompt for AI video analysis
-      const prompt = this.buildAnalysisPrompt(preferredLanguage);
-      
-      // Replace the functionDeclarations creation code with a call to the new method
-      const functionDeclarations = this.createFunctionDeclarations();
-      
       try {
+        // PERFORMANCE: Log processing time at key stages
+        const beforeGeminiTime = Date.now();
+        
         // Generate content with Gemini using FunctionCalling
         logger.debug('Calling Gemini API for video analysis', { 
           promptLength: prompt.length,
           videoSize: videoForAnalysis.length,
-          functionCallingEnabled: true 
+          functionCallingEnabled: true,
+          elapsedMsBeforeGeminiCall: beforeGeminiTime - startTime
         });
         
         const result = await geminiService.generateContentFromVideo(
@@ -266,6 +366,12 @@ export class VideoAnalysisService {
           mimeType,
           functionDeclarations
         );
+        
+        const afterGeminiTime = Date.now();
+        logger.info('Gemini API call completed', { 
+          geminiApiCallMs: afterGeminiTime - beforeGeminiTime,
+          totalElapsedMs: afterGeminiTime - startTime
+        });
         
         const response = result.response;
         const { functionCalls, firstFunctionCall } = this.safetyCheckFunctionCalls(response);
@@ -281,6 +387,13 @@ export class VideoAnalysisService {
           
           // Parse the raw text with regex
           const preliminaryResult = this.parseAnalysisResult(rawText);
+          
+          // PERFORMANCE: Track finishing stats
+          const processingTimeMs = Date.now() - startTime;
+          logger.info('Video analysis completed (text-based fallback)', { 
+            processingTimeMs,
+            ingredientCount: preliminaryResult.ingredients.length
+          });
           
           // Enhance the result with database checks
           return this.enhanceAnalysisResult(preliminaryResult);
@@ -356,7 +469,28 @@ export class VideoAnalysisService {
           const args = JSON.parse(argsString) as unknown;
           
           // Validate with Zod schema
-          const validatedArgs = ingredientAnalysisArgsSchema.parse(args);
+          let validatedArgs: IngredientAnalysisArgs;
+          try {
+            validatedArgs = ingredientAnalysisArgsSchema.parse(args);
+            
+            // *** ÄNDRA TILL INFO FÖR ATT SÄKERSTÄLLA SYNLIGHET I FLY.IO LOGGAR ***
+            logger.info('Raw validated AI function call arguments (validatedArgs):', JSON.stringify(validatedArgs, null, 2)); 
+            // ******************************************************
+          } catch (validationError) {
+            logger.error('Error parsing function call arguments', { 
+              error: validationError.message,
+              args: functionCall.args
+            });
+            
+            // Fallback to text-based response if available
+            if (response.text) {
+              const rawText = response.text();
+              const preliminaryResult = this.parseAnalysisResult(rawText);
+              return this.enhanceAnalysisResult(preliminaryResult);
+            }
+            
+            throw new Error('Failed to parse ingredient analysis result: ' + validationError.message);
+          }
           
           // Convert from function call format to our internal format
           const preliminaryResult = this.mapFunctionArgsToPreliminaryResult(validatedArgs);
@@ -379,9 +513,11 @@ export class VideoAnalysisService {
           throw new Error('Failed to parse ingredient analysis result: ' + parseError.message);
         }
       } catch (aiError: any) {
-        // If the error is related to video format, try a simpler approach
+        // Log the error with performance data
+        const processingTimeMs = Date.now() - startTime;
         logger.error('Error in primary video analysis approach', { 
-          error: aiError.message
+          error: aiError.message,
+          processingTimeMs
         });
         
         // Try fallback with simpler prompt if it's a specific type of error
@@ -429,8 +565,12 @@ export class VideoAnalysisService {
       
       throw error;
     } finally {
-      // Clean up temporary files
-      this.cleanupTempFiles(tempVideoPath, optimizedVideoPath);
+      // PERF: Clean up temporary files asynchronously
+      if (tempVideoPath || optimizedVideoPath) {
+        setTimeout(() => {
+          this.cleanupTempFiles(tempVideoPath, optimizedVideoPath);
+        }, 100); // Small delay to not block the response
+      }
     }
   }
   
@@ -487,7 +627,7 @@ export class VideoAnalysisService {
         parsedResult = this.extractIngredientsWithRegex(result);
       }
 
-      // 4. NEW: Handle Gemini structured response with 'ingredientAnalysis' instead of 'ingredients'
+      // 4. Handle Gemini structured response with 'ingredientAnalysis' instead of 'ingredients'
       if (parsedResult && Array.isArray(parsedResult.ingredientAnalysis) && !Array.isArray(parsedResult.ingredients)) {
         logger.info('Detected Gemini format with ingredientAnalysis array, converting to expected format');
         
@@ -502,9 +642,10 @@ export class VideoAnalysisService {
           };
         });
         
-        // Determine overall status
+        // Determine overall status - DEFAULT TO UNCERTAIN INSTEAD OF NON-VEGAN
         let isVegan = parsedResult.overallStatus === "sannolikt vegansk";
-        let isUncertain = parsedResult.overallStatus === "oklart";
+        // Change default behavior: uncertain instead of non-vegan
+        let isUncertain = parsedResult.overallStatus === "oklart" || !parsedResult.overallStatus;
         let confidence = parsedResult.overallConfidence || 0.5;
         
         // Create a new result object with the mapped data
@@ -513,7 +654,7 @@ export class VideoAnalysisService {
           isVegan: isVegan,
           isUncertain: isUncertain,
           confidence: confidence,
-          reasoning: parsedResult.reasoning || `Produkt analyserad: ${parsedResult.overallStatus}`,
+          reasoning: parsedResult.reasoning || `Produkt analyserad: ${parsedResult.overallStatus || 'oklar status'}`,
           uncertainReasons: []
         };
         
@@ -524,46 +665,36 @@ export class VideoAnalysisService {
         });
       }
 
-      // Basic validation of the parsed structure - expanded validation
-      if (!parsedResult) {
-        throw new Error('No valid result structure found in AI response');
+      // 5. Final safety checks for required properties
+      // Check if ingredients exist and set default if needed
+      if (!parsedResult || !parsedResult.ingredients || !Array.isArray(parsedResult.ingredients)) {
+        logger.warn('No valid ingredients found in the result, setting empty array');
+        parsedResult = parsedResult || {};
+        parsedResult.ingredients = [];
       }
-      
-      // Check if ingredients array exists, or create from available data
-      if (!Array.isArray(parsedResult.ingredients)) {
-        logger.warn('No ingredients array found in parsed result, attempting recovery');
-        
-        // Try to recover from other data structures
-        if (Array.isArray(parsedResult.ingredientAnalysis)) {
-          parsedResult.ingredients = parsedResult.ingredientAnalysis.map((item: any) => {
-            return {
-              name: item.name || "Unknown ingredient",
-              isVegan: item.status === "vegansk" || (typeof item.isVegan === 'boolean' ? item.isVegan : false),
-              isUncertain: item.status === "osäker",
-              confidence: item.confidence || 0.5
-            };
-          });
-        } else if (parsedResult.ingredients && typeof parsedResult.ingredients === 'string') {
-          // Handle case where ingredients might be a comma-separated string
-          parsedResult.ingredients = parsedResult.ingredients.split(/,\s*/).map((name: string) => {
-            return { name, isVegan: true, confidence: 0.5 };
-          });
-        } else {
-          // Last resort: create empty array
-          parsedResult.ingredients = [];
-          throw new Error('Could not recover ingredients data from parsed result');
-        }
-      }
-      
-      // Ensure confidence and isVegan exist at the top level (even if regex was used)
+
+      // Make sure isVegan, isUncertain and confidence have valid values
       if (typeof parsedResult.isVegan !== 'boolean') {
-        if (parsedResult.overallStatus) {
-          parsedResult.isVegan = parsedResult.overallStatus === "sannolikt vegansk";
+        // If there are ingredients that are clearly non-vegan, set isVegan to false
+        const hasNonVeganIngredients = parsedResult.ingredients.some((i: IngredientAnalysisResult) => i.isVegan === false && i.isUncertain !== true);
+        
+        if (hasNonVeganIngredients) {
+          parsedResult.isVegan = false;
+          logger.info('Setting isVegan=false based on ingredient analysis (first-run protection)');
         } else {
-          parsedResult.isVegan = false; // Default to false if missing
+          // IMPORTANT: For first-run, default to uncertain rather than non-vegan
+          parsedResult.isVegan = false; // Still false but we'll set isUncertain to true
+          parsedResult.isUncertain = true;
+          logger.info('First-run protection: Setting isUncertain=true instead of immediate non-vegan default');
         }
       }
-      
+
+      // If isUncertain isn't specified but we have uncertain ingredients, set it
+      if (typeof parsedResult.isUncertain !== 'boolean') {
+        const hasUncertainIngredients = parsedResult.ingredients.some((i: IngredientAnalysisResult) => i.isUncertain === true);
+        parsedResult.isUncertain = hasUncertainIngredients;
+      }
+
       if (typeof parsedResult.confidence !== 'number') {
         parsedResult.confidence = parsedResult.overallConfidence || 0.5; // Default confidence if missing
       }
@@ -574,6 +705,7 @@ export class VideoAnalysisService {
       logger.info('Successfully parsed AI analysis text to preliminary result', {
         ingredientCount: parsedResult.ingredients.length,
         preliminaryIsVegan: parsedResult.isVegan, // May change after enhancement
+        isUncertainSet: parsedResult.isUncertain === true, // Log whether uncertain was set
         source: Array.isArray(parsedResult.ingredientAnalysis) ? 'gemini-direct-json' : 'standard-format'
       });
 
@@ -592,14 +724,14 @@ export class VideoAnalysisService {
           error: error.message,
           originalResponse: result
       });
-      // Return a default empty result on fatal processing error
+      // Return a default empty result on fatal processing error - SET UNCERTAIN TO TRUE
       return {
         ingredients: [],
         isVegan: false,
-        isUncertain: false,
-        confidence: 0,
-        reasoning: 'Error processing analysis result',
-        uncertainReasons: []
+        isUncertain: true, // CHANGE: Default to uncertain on error
+        confidence: 0, 
+        reasoning: 'Kunde inte bearbeta analysresultatet. Osäker på produktens veganska status.',
+        uncertainReasons: ['Tekniskt fel vid analys']
       };
     }
   }
@@ -779,6 +911,12 @@ export class VideoAnalysisService {
   private enhanceAnalysisResult(preliminaryResult: VideoAnalysisResult): VideoAnalysisResult {
     logger.debug('Enhancing preliminary analysis result with database checks and final status determination.');
     
+    // NEW: Track system state to identify first-time run
+    const isFirstTimeRun = isFirstAnalysisRun();
+    if (isFirstTimeRun) {
+      logger.info('FIRST-TIME RUN DETECTED: Applying special handling for first analysis');
+    }
+    
     // 1. Validate ingredients against database and update status/confidence
     for (const ingredient of preliminaryResult.ingredients) {
       if (!ingredient || !ingredient.name) {
@@ -804,64 +942,51 @@ export class VideoAnalysisService {
       logger.debug(`[Enhance Step 2] DB status for "${ingredientNameForLog}"`, { dbStatus });
       // --- END DEBUG LOGGING --- 
 
-      if (dbStatus.isVegan === false) {
-        // Definitely non-vegan according to database
-        if (ingredient.isVegan !== false || ingredient.isUncertain === true) {
-          logIngredientCorrection({
-            ingredient: ingredient.name,
-            originalStatus: originalIsVegan,
-            originalIsUncertain: originalIsUncertain,
-            correctedStatus: false,
-            isUncertain: false,
-            reason: `Database match (Non-Vegan): ${dbStatus.reason || 'Known non-vegan ingredient'}`,
-            confidence: 0.99
-          });
+      // Update ingredient status based on database - Fix: check for matchedItem instead of match
+      if (dbStatus.matchedItem) {
+        if (dbStatus.isVegan === false) {
+          // Definitely non-vegan according to database
+          if (ingredient.isVegan !== false || ingredient.isUncertain === true) {
+            logIngredientCorrection({
+              ingredient: ingredient.name,
+              originalStatus: originalIsVegan,
+              originalIsUncertain: originalIsUncertain,
+              correctedStatus: false,
+              isUncertain: false,
+              reason: `Database match (Non-vegan): ${dbStatus.reason || 'Known non-vegan ingredient'}`,
+              confidence: 0.98
+            });
+          }
+          ingredient.isVegan = false;
+          ingredient.isUncertain = false;
+          ingredient.confidence = 0.98; // High confidence from DB
+        } else if (dbStatus.isVegan === true) {
+          // Definitely vegan according to database
+          if (ingredient.isVegan !== true || ingredient.isUncertain === true) {
+            logIngredientCorrection({
+              ingredient: ingredient.name,
+              originalStatus: originalIsVegan,
+              originalIsUncertain: originalIsUncertain,
+              correctedStatus: true,
+              isUncertain: false,
+              reason: `Database match (Vegan): ${dbStatus.reason || 'Known vegan ingredient'}`,
+              confidence: 0.98
+            });
+          }
+          ingredient.isVegan = true;
+          ingredient.isUncertain = false;
+          ingredient.confidence = 0.98; // High confidence from DB
         }
-        ingredient.isVegan = false;
-        ingredient.isUncertain = false;
-        ingredient.confidence = 0.99; // High confidence from DB
-      } else if (dbStatus.isUncertain === true) {
-        // Uncertain according to database
-        if (ingredient.isUncertain !== true) {
-          logIngredientCorrection({
-            ingredient: ingredient.name,
-            originalStatus: originalIsVegan,
-            originalIsUncertain: originalIsUncertain,
-            correctedStatus: false, // Uncertain treated as non-vegan
-            isUncertain: true,
-            reason: `Database match (Uncertain): ${dbStatus.reason || 'Known uncertain ingredient'}`,
-            confidence: 0.5
-          });
-        }
-        ingredient.isVegan = false; // Uncertain ingredients treated as non-vegan
-        ingredient.isUncertain = true;
-        ingredient.confidence = 0.5; // Medium confidence
-      } else if (dbStatus.isVegan === true) {
-        // Definitely vegan according to database
-        if (ingredient.isVegan !== true || ingredient.isUncertain === true) {
-          logIngredientCorrection({
-            ingredient: ingredient.name,
-            originalStatus: originalIsVegan,
-            originalIsUncertain: originalIsUncertain,
-            correctedStatus: true,
-            isUncertain: false,
-            reason: `Database match (Vegan): ${dbStatus.reason || 'Known vegan ingredient'}`,
-            confidence: 0.98
-          });
-        }
-        ingredient.isVegan = true;
-        ingredient.isUncertain = false;
-        ingredient.confidence = 0.98; // High confidence from DB
+        // If no database match, keep AI's assessment
+        
+        // --- BEGIN DEBUG LOGGING --- 
+        logger.debug(`[Enhance Step 3] Final status for "${ingredientNameForLog}" after DB check`, {
+            finalIsVegan: ingredient.isVegan,
+            finalIsUncertain: ingredient.isUncertain,
+            finalConfidence: ingredient.confidence
+        });
+        // --- END DEBUG LOGGING --- 
       }
-      // If no database match, keep AI's assessment
-      
-      // --- BEGIN DEBUG LOGGING --- 
-      logger.debug(`[Enhance Step 3] Final status for "${ingredientNameForLog}" after DB check`, {
-          finalIsVegan: ingredient.isVegan,
-          finalIsUncertain: ingredient.isUncertain,
-          finalConfidence: ingredient.confidence
-      });
-      // --- END DEBUG LOGGING --- 
     }
     
     // 2. Process and deduplicate ingredients
@@ -887,6 +1012,19 @@ export class VideoAnalysisService {
     
     // 3. Determine final product status based on ingredients
     const finalStatus = this._determineFinalStatusFromIngredients(preliminaryResult.ingredients);
+    
+    // Count non-vegan ingredients for first-run detection
+    const nonVeganCount = preliminaryResult.ingredients.filter(i => 
+      i.isVegan === false && i.isUncertain !== true
+    ).length;
+    
+    // Special handling for first time run - IMPORTANT
+    if (isFirstTimeRun && !finalStatus.isVegan && nonVeganCount === 0) {
+      logger.info('First-time run adjustment: Setting product to uncertain instead of non-vegan when no clear non-vegan ingredients detected');
+      finalStatus.isUncertain = true;
+      finalStatus.uncertainReasons.push('Första analysen, försiktighet tillämpas');
+      finalStatus.isVegan = false;
+    }
     
     // 4. Generate reasoning text
     let finalReasoning = '';
@@ -926,33 +1064,79 @@ export class VideoAnalysisService {
    * @returns A preliminary VideoAnalysisResult object.
    */
   private mapFunctionArgsToPreliminaryResult(args: IngredientAnalysisArgs): VideoAnalysisResult {
-    logger.debug('Mapping function call args to preliminary result structure using translated names.');
+    // Map product status to isVegan & isUncertain
+    let isVegan = false;
+    let isUncertain = false;
     
-    const mappedIngredients = args.ingredients.map(ing => {
-      const isVeganIngredient = ing.status === 'vegansk';
-      const isUncertainIngredient = ing.status === 'osäker';
+    if (args.product_status === "sannolikt vegansk") {
+      isVegan = true;
+      isUncertain = false;
+    } else if (args.product_status === "sannolikt icke-vegansk") {
+      isVegan = false;
+      isUncertain = false;
+    } else if (args.product_status === "oklart") {
+      isVegan = false;
+      isUncertain = true;
+    }
+    
+    // Samla anledningar till osäkerhet om det behövs
+    const uncertainReasons: string[] = [];
+    
+    // Mappa ingredienser
+    const mappedIngredients: IngredientAnalysisResult[] = args.ingredients.map(ingredient => {
+      // Använd det översatta namnet istället för originalnamnet
+      const name = ingredient.translated_name || ingredient.name;
+      
+      let isIngredientVegan = true;
+      let isIngredientUncertain = false;
+      
+      if (ingredient.status === "icke-vegansk") {
+        isIngredientVegan = false;
+        isIngredientUncertain = false;
+        // Lägg endast till anledning om den finns
+        if (ingredient.reasoning) {
+          uncertainReasons.push(`Ingrediensen "${name}" är inte vegansk: ${ingredient.reasoning}`);
+        }
+      } else if (ingredient.status === "osäker") {
+        isIngredientVegan = false;
+        isIngredientUncertain = true;
+        // Lägg endast till anledning om den finns
+        if (ingredient.reasoning) {
+          uncertainReasons.push(`Ingrediensen "${name}" har osäker vegansk status: ${ingredient.reasoning}`);
+        }
+      }
+      
       return {
-        name: ing.translated_name, // Use the translated name from AI
-        // originalName: ing.name, // Optional: Keep original name if needed elsewhere
-        isVegan: isVeganIngredient,
-        isUncertain: isUncertainIngredient,
-        confidence: ing.confidence,
+        name, // Använd det översatta namnet i appen
+        isVegan: isIngredientVegan,
+        isUncertain: isIngredientUncertain,
+        confidence: ingredient.confidence
       };
     });
-
-    // Collect reasoning for uncertain ingredients (using translated name for clarity)
-    const uncertainReasons = args.ingredients
-      .filter(ing => ing.status === 'osäker')
-      .map(ing => `${ing.translated_name}: ${ing.reasoning || 'Okänd anledning'}`); // Lägg till fallback för saknat reasoning-fält
-
-    // Return preliminary structure, status determined later by enhanceAnalysisResult
+    
+    // Om vi inte har några specifika anledningar men resultatet är osäkert,
+    // lägg till en generisk förklaring
+    if (isUncertain && uncertainReasons.length === 0) {
+      uncertainReasons.push("Osäker vegansk status. Några ingredienser har oklar vegansk status.");
+    }
+    
+    // Skapa lämplig reasoning-text
+    let reasoning = isVegan 
+                    ? "Produkten innehåller inga icke-veganska ingredienser."
+                    : isUncertain
+                      ? "Osäker vegansk status. Orsaker: " + uncertainReasons.join(" ")
+                      : "Innehåller icke-veganska ingredienser: " + mappedIngredients
+                          .filter(i => !i.isVegan && !i.isUncertain)
+                          .map(i => i.name)
+                          .join(", ") + ".";
+    
     return {
       ingredients: mappedIngredients,
-      isVegan: args.product_status === 'sannolikt vegansk',
-      isUncertain: args.product_status === 'oklart',
+      isVegan,
+      isUncertain,
       confidence: args.overall_confidence,
-      uncertainReasons: uncertainReasons,
-      reasoning: `AI-bedömning: ${args.product_status}`
+      reasoning,
+      uncertainReasons
     };
   }
   
@@ -1049,34 +1233,33 @@ Ange produktens övergripande status ('sannolikt vegansk', 'sannolikt icke-vegan
   
   /**
    * Build a prompt for the AI to analyze food product ingredients and translate them.
-   * @param preferredLanguage The target language for translation (e.g., 'en', 'sv').
    */
-  private buildAnalysisPrompt(preferredLanguage: string): string {
-    // Ensure language code is lowercase for consistency if needed, though Gemini might handle various cases.
-    const targetLanguage = preferredLanguage.toLowerCase(); 
-    const languageName = targetLanguage === 'en' ? 'English' : 'Swedish'; // Simple mapping for prompt clarity
+  private buildAnalysisPrompt(): string {
+    // HÅRDKODAT KRAV: Alltid svenska!
+    const targetLanguage = 'sv'; 
+    const languageName = 'Swedish';
 
-    // Updated prompt instructing AI to translate to preferredLanguage
+    // Updated prompt instructing AI to translate to Swedish
     return `
 Du är en expert på att analysera matprodukter och identifiera deras ingredienser för att avgöra om produkten är vegansk.
 
-MÅLSPRÅK för översättning: ${languageName} (${targetLanguage})
+MÅLSPRÅK för översättning och ALLA returnerade ingrediensnamn: ${languageName} (${targetLanguage})
 
 INSTRUKTIONER:
 1. Analysera videon NOGGRANT. Identifiera ingredienserna som tydligt VISAS på produktens förpackning.
 2. Använd verktyget 'recordIngredientAnalysis' för att strukturera och returnera ditt svar.
 3. För varje identifierad ingrediens:
    a. Ange ingrediensens **originalnamn** (som det står på förpackningen) i fältet 'name'.
-   b. **Översätt originalnamnet till målspråket (${languageName})** och ange det i fältet 'translated_name'. Om du inte kan översätta, ange originalnamnet även i 'translated_name'.
+   b. **Översätt originalnamnet till ${languageName}.** Ange den svenska översättningen i fältet 'translated_name'. **DET ÄR KRITISKT VIKTIGT att 'translated_name' ALLTID innehåller den korrekta svenska översättningen.** Om en översättning mot förmodan inte är möjlig, ange originalnamnet i 'translated_name' och notera detta i 'reasoning'.
    c. Ange dess status: 'vegansk', 'icke-vegansk', 'osäker'.
-   d. SPECIFIK REGEL: Ingrediensen 'Arom' (eller motsvarande på andra språk) ska klassificeras som 'osäker' om dess ursprung inte specificeras.
-   e. Ange en konfidenspoäng (0.0-1.0) för statusklassificeringen.
-   f. VIKTIGT: För 'icke-vegansk' eller 'osäker' status, MÅSTE du ange en kort motivering ('reasoning').
+   d. SPECIFIK REGEL: Ingrediensen 'Arom' (eller motsvarande) ska klassificeras som 'osäker' om dess ursprung inte specificeras.
+   e. Ange en konfidenspoäng (0.0-1.0).
+   f. VIKTIGT: För 'icke-vegansk' eller 'osäker' status, MÅSTE du ange en kort motivering ('reasoning') på ${languageName}.
 4. Ange produktens övergripande status ('sannolikt vegansk', 'sannolikt icke-vegansk', 'oklart') och en övergripande konfidenspoäng.
-5. Inkludera ALLA identifierade ingredienser, men lista varje unik ingrediens endast EN gång baserat på dess originalnamn.
+5. Inkludera ALLA identifierade ingredienser, men lista varje unik ingrediens endast EN gång (baserat på originalnamn).
 6. Basera din analys ENDAST på vad som FAKTISKT SYNS i videon.
 
-Använd verktyget 'recordIngredientAnalysis' för att returnera resultatet med både originalnamn ('name') och namn översatta till ${languageName} ('translated_name').
+Använd verktyget 'recordIngredientAnalysis'. **SÄKERSTÄLL ATT ALLA INGREDIENSNAMN DU RETURNERAR I FUNKTIONSANROPETS ARGUMENT, SÄRSKILT I FÄLTET 'translated_name', ALLTID ÄR PÅ ${languageName} (${targetLanguage}).**
 `;
   }
   
@@ -1241,6 +1424,28 @@ Använd verktyget 'recordIngredientAnalysis' för att returnera resultatet med b
     });
     
     return { functionCalls, firstFunctionCall, functionCallName };
+  }
+
+  /**
+   * Build a more compact analysis prompt for larger videos
+   * Optimized version of buildAnalysisPrompt with fewer tokens
+   */
+  private buildCompactAnalysisPrompt(preferredLanguage: string): string {
+    const prompt = `
+Analysera videon för att snabbt identifiera ingredienser på produktens förpackning.
+
+SPRÅK: ${preferredLanguage || 'Swedish'}
+
+UPPGIFT:
+1. Identifiera ingredienser som visas på förpackningen
+2. Klassificera varje ingrediens som "vegansk", "icke-vegansk" eller "osäker"
+3. Ange en konfidenspoäng (0.0-1.0) för varje klassificering
+4. Ge en övergripande bedömning av produkten
+5. Använd verktyget "recordIngredientAnalysis" för att strukturera svaret
+
+Fokusera enbart på vad som faktiskt visas i videon.
+`;
+    return prompt;
   }
 }
 

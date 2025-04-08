@@ -5,7 +5,6 @@ import { logger } from '../utils/logger';
 import { ingredientDB } from './ingredientDatabase';
 import languageDetector from '../utils/languageDetector';
 import { loadTextAnalysisPrompts } from '../config/prompts';
-import { loadImagePromptTemplates } from '../config/imagePrompts';
 import { imageProcessor } from './imageProcessor';
 import { performance } from 'perf_hooks';
 import crypto from 'crypto';
@@ -32,9 +31,6 @@ export class AnalysisService {
   constructor() {
     // Load the enhanced text analysis templates
     loadTextAnalysisPrompts(promptManager);
-    
-    // Load the image analysis templates
-    loadImagePromptTemplates(promptManager);
     
     // Setup cache configuration
     this.cacheConfig = {

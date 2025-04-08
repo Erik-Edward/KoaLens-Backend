@@ -76,7 +76,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 // Add explicit preflight handler for all routes
-app.options('*', (req, res) => {
+app.options('*', (_req, res) => {
   // Set CORS headers for preflight requests
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
@@ -92,7 +92,28 @@ logger.info('CORS configured with settings', { corsOptions });
 app.use(express.json({ limit: '50mb' })); // Increased limit for media uploads
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Använd nya API-routes under /api path
+// CORS options for API routes
+app.use('/api', (req, res, next) => {
+  // Set CORS headers to allow mobile app requests
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  
+  // Add custom header to indicate API version
+  res.header('X-KoaLens-API-Version', '1.1.0');
+  
+  // Add custom header to help client identify enhanced response format
+  res.header('X-KoaLens-Enhanced-Response', 'true');
+  
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+  } else {
+    next();
+  }
+});
+
+// Montera API-routes efter CORS-hanteringen
 app.use('/api', apiRoutes);
 
 // Lägg till direkta rutter för videoanalys i rot-nivån för att fånga upp anrop från äldre appar
