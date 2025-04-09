@@ -137,12 +137,17 @@ export async function createUserUsageRecord(userId: string) {
 }
 
 // NEUTRALISERAD: Simulerar lyckad ökning av analysräknaren
-export async function incrementAnalysisCount(userId: string) {
+export async function incrementAnalysisCount(userId: string): Promise<{
+  analysesUsed: number;
+  analysesLimit: number;
+  isPremium: boolean;
+}> {
   console.log('NEUTRALISERAD: Simulerar ökning av analysräknare för användare:', userId);
   
   return { 
     analysesUsed: 1, 
-    analysesLimit: 999 
+    analysesLimit: 999,
+    isPremium: false
   };
 }
 

@@ -1,7 +1,10 @@
 import { Router, Request, Response, RequestHandler } from 'express';
 import { logger } from '../utils/logger';
-import videoAnalysisService from '../services/videoAnalysisService';
+import { VideoAnalysisService } from '../services/videoAnalysisService';
 import { checkIngredientStatus } from "../utils/ingredientsDatabase";
+// import { checkUserLimit } from '../services/supabaseService'; // Removed unused import
+// import { z } from 'zod'; // Removed unused import
+import { VideoAnalysisResult, IngredientAnalysisResult } from '../types/analysisTypes'; // Re-added VideoAnalysisResult
 
 // Local type definition for request
 interface MediaAnalysisRequest {
@@ -29,6 +32,8 @@ const apiStats = {
   duplicateRequestsBlocked: 0,
   ingredientCorrections: 0
 };
+
+const videoAnalysisService = new VideoAnalysisService();
 
 /**
  * Clean up old request entries from the deduplication cache
@@ -227,67 +232,61 @@ async function processVideoAnalysisRequest(req: Request, res: Response): Promise
       requestId: requestId || 'not-provided'
     });
     
-    // Transform the result - NO LONGER needs translation here
+    // Transform the result to the format expected by the frontend
     const transformedResult = {
+      success: true,
+      status: result.isVegan === null 
+        ? (result.isUncertain ? 'uncertain' : 'unknown') 
+        : (result.isVegan ? 'vegan' : 'non-vegan'),
       isVegan: result.isVegan,
-      isUncertain: result.isUncertain || false,
+      isUncertain: result.isUncertain,
       confidence: result.confidence,
-      // Add an explicit status field that simplifies UI display logic
-      status: !result.isVegan && !result.isUncertain 
-        ? 'icke-vegansk' 
-        : (result.isVegan ? 'vegansk' : 'osäker'),
-      // Explicit color codes for UI to use
-      statusColor: !result.isVegan && !result.isUncertain 
-        ? 'red' 
-        : (result.isVegan ? 'green' : 'orange'),
-      // Provide color-coded ingredient list to simplify UI rendering
-      ingredientList: result.ingredients.map(ingredient => ingredient.name),
-      // Add status-color-coded ingredients for UI rendering
-      ingredientsWithStatus: result.ingredients.map(ingredient => ({
+      ingredientList: result.ingredients.map((ingredient: IngredientAnalysisResult) => ({
         name: ingredient.name,
-        isVegan: ingredient.isVegan,
-        isUncertain: ingredient.isUncertain,
-        // Explicit status for each ingredient
-        status: ingredient.isVegan 
-          ? 'vegan' 
-          : (ingredient.isUncertain ? 'uncertain' : 'non-vegan'),
-        // Color code for frontend rendering
-        statusColor: ingredient.isVegan 
-          ? 'green' 
-          : (ingredient.isUncertain ? 'orange' : 'red'),
+        status: ingredient.isUncertain 
+          ? 'uncertain' 
+          : (ingredient.isVegan === null ? 'unknown' : (ingredient.isVegan ? 'vegan' : 'non-vegan')),
+        statusColor: ingredient.isUncertain 
+          ? '#FFBF00' 
+          : (ingredient.isVegan === null ? 'grey' : (ingredient.isVegan ? '#90EE90' : '#FF6347')),
         description: ingredient.isUncertain 
           ? `Ingrediensen "${ingredient.name}" kan vara vegansk eller icke-vegansk.`
-          : ingredient.isVegan 
-            ? `Ingrediensen "${ingredient.name}" är vegansk.` 
-            : `Ingrediensen "${ingredient.name}" är inte vegansk.`
+          : (ingredient.isVegan === null ? `Status okänd för "${ingredient.name}".` : (ingredient.isVegan ? `Ingrediensen "${ingredient.name}" är vegansk.` : `Ingrediensen "${ingredient.name}" är inte vegansk.`))
       })),
-      // Changed from watchedIngredients to make it more explicit
+      // Format ingredients for frontend status display
       // This is the list that frontend uses for coloring and status display
       watchedIngredients: result.ingredients
-        .filter(ingredient => !ingredient.isVegan || ingredient.isUncertain)
-        .map(ingredient => ({ 
+        .filter((ingredient: IngredientAnalysisResult) => !ingredient.isVegan || ingredient.isUncertain) // Correct type: IngredientAnalysisResult
+        .map((ingredient: IngredientAnalysisResult) => ({ // Correct type: IngredientAnalysisResult
           name: ingredient.name, 
           status: ingredient.isUncertain ? 'uncertain' : 'non-vegan',
-          statusColor: ingredient.isUncertain ? 'orange' : 'red',
-          reason: ingredient.isUncertain ? 'uncertain' : 'non-vegan', // Add reason field for frontend
+          statusColor: ingredient.isUncertain ? '#FFBF00' : '#FF6347', // Orange/Yellow for uncertain, Red for non-vegan
+          reason: ingredient.isUncertain ? 'Potentiellt icke-vegansk' : 'Icke-vegansk',
           description: ingredient.isUncertain 
-            ? `Ingrediensen "${ingredient.name}" kan vara vegansk eller icke-vegansk.`
-            : `Ingrediensen "${ingredient.name}" är inte vegansk.`
+            ? 'Denna ingrediens kan vara antingen växt- eller djurbaserad.'
+            : 'Denna ingrediens är av animaliskt ursprung.'
         })),
       // Gruppera explicitt per status
       veganIngredients: result.ingredients
-        .filter(ingredient => ingredient.isVegan)
-        .map(ingredient => ingredient.name),
+        .filter((ingredient: IngredientAnalysisResult) => ingredient.isVegan === true) // Correct type: IngredientAnalysisResult
+        .map((ingredient: IngredientAnalysisResult) => ingredient.name), // Correct type: IngredientAnalysisResult
       nonVeganIngredients: result.ingredients
-        .filter(ingredient => !ingredient.isVegan && !ingredient.isUncertain)
-        .map(ingredient => ingredient.name),
+        .filter((ingredient: IngredientAnalysisResult) => ingredient.isVegan === false && !ingredient.isUncertain) // Correct type: IngredientAnalysisResult
+        .map((ingredient: IngredientAnalysisResult) => ingredient.name), // Correct type: IngredientAnalysisResult
       uncertainIngredients: result.ingredients
-        .filter(ingredient => ingredient.isUncertain)
-        .map(ingredient => ingredient.name),
+        .filter((ingredient: IngredientAnalysisResult) => ingredient.isUncertain === true) // Correct type: IngredientAnalysisResult
+        .map((ingredient: IngredientAnalysisResult) => ingredient.name), // Correct type: IngredientAnalysisResult
       // Lägg till information om problemingrediens som orsakar "Ej vegansk" status
-      problemIngredient: result.ingredients.find(ingredient => !ingredient.isVegan && !ingredient.isUncertain)?.name || null,
+      problemIngredient: result.ingredients.find((ingredient: IngredientAnalysisResult) => ingredient.isVegan === false && !ingredient.isUncertain)?.name || null, // Correct type: IngredientAnalysisResult
       uncertainReasons: result.uncertainReasons || [],
-      reasoning: result.reasoning || ''
+      reasoning: result.reasoning || '',
+      // Add usage info if available
+      usageInfo: result.usageInfo || {
+        analysesUsed: 0,
+        analysesLimit: 10, // Default limit if not available
+        remaining: 10,      // Default remaining if not available
+        isPremium: false   // Default premium status
+      }
     };
     
     // Remove the requestId from the deduplication cache after successful processing
@@ -544,7 +543,7 @@ router.post('/ingredients/suggest', (async (req: Request, res: Response) => {
 /**
  * Test endpoint to check E304 directly - for debugging
  */
-router.get("/test-e304", (req: Request, res: Response) => {
+router.get("/test-e304", (_req: Request, res: Response) => {
   try {
     const ingredientName = "E304";
     const status = checkIngredientStatus(ingredientName);
@@ -569,6 +568,111 @@ router.get("/test-e304", (req: Request, res: Response) => {
   } catch (error) {
     logger.error("Error testing E304:", error);
     res.status(500).json({ error: "Internal server error testing E304" });
+  }
+});
+
+/**
+ * Test endpoint to simulate a full analysis flow and return the transformed result
+ */
+router.get('/test-full-analysis', async (_req: Request, res: Response) => {
+  const startTime = Date.now();
+  logger.info('Running full analysis test endpoint');
+  try {
+    // Mock data - In a real scenario, this might be more complex or fetched
+    const mockAnalysisResult: VideoAnalysisResult = {
+      ingredients: [
+        { name: 'Majs', isVegan: true, isUncertain: false, confidence: 0.9 },
+        { name: 'Mjölk', isVegan: false, isUncertain: false, confidence: 0.99 },
+        { name: 'E304', isVegan: null, isUncertain: true, confidence: 0.7 },
+        { name: 'Vatten', isVegan: true, isUncertain: false, confidence: 1.0 }
+      ],
+      isVegan: null, // Overall status derived from ingredients
+      isUncertain: true, // Overall status derived from ingredients
+      confidence: 0.65, 
+      reasoning: 'Produkten innehåller både icke-veganska (Mjölk) och osäkra (E304) ingredienser.',
+      uncertainReasons: ['Innehåller E304 som kan ha animaliskt ursprung.'],
+      videoProcessed: true,
+      preferredLanguage: 'sv',
+      usageInfo: { // Add mock usage info
+        analysesUsed: 5,
+        analysesLimit: 100,
+        remaining: 95,
+        isPremium: false
+      }
+    };
+
+    // Simulate calling analyzeVideo (we use mock data directly here for simplicity)
+    const result = mockAnalysisResult; 
+
+    const processingTime = (Date.now() - startTime) / 1000;
+    logger.info('Mock analysis data generated', { 
+      processingTimeSec: processingTime.toFixed(2),
+      ingredientCount: result.ingredients.length
+    });
+
+    // --- Apply the SAME transformation logic as in processVideoAnalysisRequest ---
+    const transformedResult = {
+      success: true,
+      status: result.isVegan === null 
+        ? (result.isUncertain ? 'uncertain' : 'unknown') 
+        : (result.isVegan ? 'vegan' : 'non-vegan'),
+      isVegan: result.isVegan,
+      isUncertain: result.isUncertain,
+      confidence: result.confidence,
+      ingredientList: result.ingredients.map((ingredient: IngredientAnalysisResult) => ({
+        name: ingredient.name,
+        status: ingredient.isUncertain 
+          ? 'uncertain' 
+          : (ingredient.isVegan === null ? 'unknown' : (ingredient.isVegan ? 'vegan' : 'non-vegan')),
+        statusColor: ingredient.isUncertain 
+          ? '#FFBF00' 
+          : (ingredient.isVegan === null ? 'grey' : (ingredient.isVegan ? '#90EE90' : '#FF6347')),
+        description: ingredient.isUncertain 
+          ? `Ingrediensen "${ingredient.name}" kan vara vegansk eller icke-vegansk.`
+          : (ingredient.isVegan === null ? `Status okänd för "${ingredient.name}".` : (ingredient.isVegan ? `Ingrediensen "${ingredient.name}" är vegansk.` : `Ingrediensen "${ingredient.name}" är inte vegansk.`))
+      })),
+      watchedIngredients: result.ingredients
+        .filter((ingredient: IngredientAnalysisResult) => !ingredient.isVegan || ingredient.isUncertain) 
+        .map((ingredient: IngredientAnalysisResult) => ({ 
+          name: ingredient.name, 
+          status: ingredient.isUncertain ? 'uncertain' : 'non-vegan',
+          statusColor: ingredient.isUncertain ? '#FFBF00' : '#FF6347', 
+          reason: ingredient.isUncertain ? 'Potentiellt icke-vegansk' : 'Icke-vegansk',
+          description: ingredient.isUncertain 
+            ? 'Denna ingrediens kan vara antingen växt- eller djurbaserad.'
+            : 'Denna ingrediens är av animaliskt ursprung.'
+        })),
+      veganIngredients: result.ingredients
+        .filter((ingredient: IngredientAnalysisResult) => ingredient.isVegan === true) 
+        .map((ingredient: IngredientAnalysisResult) => ingredient.name), 
+      nonVeganIngredients: result.ingredients
+        .filter((ingredient: IngredientAnalysisResult) => ingredient.isVegan === false && !ingredient.isUncertain) 
+        .map((ingredient: IngredientAnalysisResult) => ingredient.name), 
+      uncertainIngredients: result.ingredients
+        .filter((ingredient: IngredientAnalysisResult) => ingredient.isUncertain === true) 
+        .map((ingredient: IngredientAnalysisResult) => ingredient.name), 
+      problemIngredient: result.ingredients.find((ingredient: IngredientAnalysisResult) => ingredient.isVegan === false && !ingredient.isUncertain)?.name || null, 
+      uncertainReasons: result.uncertainReasons || [],
+      reasoning: result.reasoning || '',
+      usageInfo: result.usageInfo || { // Fallback usage info
+        analysesUsed: 0,
+        analysesLimit: 10, 
+        remaining: 10,      
+        isPremium: false   
+      }
+    };
+    // --- End transformation logic ---
+
+    logger.info('Sending test analysis response', { transformedResult });
+    res.status(200).json(transformedResult); // Return the transformed result directly
+
+  } catch (error: any) {
+    logger.error('Error in test-full-analysis endpoint', { error });
+    res.status(500).json({
+      success: false,
+      error: 'Test analysis failed',
+      message: error.message || 'Unknown error'
+    });
   }
 });
 

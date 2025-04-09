@@ -3,8 +3,21 @@
  */
 export interface IngredientAnalysisResult {
   name: string;
-  isVegan: boolean;
+  isVegan: boolean | null;
+  isUncertain: boolean;
   confidence: number;
+  reason?: string;
+  usageInfo?: UsageInfo;
+}
+
+/**
+ * Interface for usage information
+ */
+export interface UsageInfo {
+  analysesUsed: number;
+  analysesLimit: number;
+  remaining: number;
+  isPremium?: boolean;
 }
 
 /**
@@ -12,8 +25,16 @@ export interface IngredientAnalysisResult {
  */
 export interface VideoAnalysisResult {
   ingredients: IngredientAnalysisResult[];
-  isVegan: boolean;
+  isVegan: boolean | null;
+  isUncertain: boolean;
   confidence: number;
+  reasoning?: string;
+  uncertainReasons?: string[];
+  uncertainIngredients?: IngredientAnalysisResult[];
+  nonVeganIngredients?: IngredientAnalysisResult[];
+  usageInfo?: UsageInfo;
+  videoProcessed?: boolean;
+  preferredLanguage?: string;
 }
 
 /**
@@ -30,8 +51,12 @@ export interface MediaAnalysisRequest {
  */
 export interface ImageAnalysisResult {
   ingredients: IngredientAnalysisResult[];
-  isVegan: boolean;
+  isVegan: boolean | null;
+  isUncertain: boolean;
   confidence: number;
+  reason?: string;
+  uncertainIngredients?: IngredientAnalysisResult[];
+  nonVeganIngredients?: IngredientAnalysisResult[];
 }
 
 /**

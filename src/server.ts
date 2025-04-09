@@ -163,18 +163,22 @@ const safetySettings = [
 // but the parsing logic will change. Rename ClaudeAnalysisResult
 interface GeminiAnalysisResult { // Renamed from ClaudeAnalysisResult
   isVegan: boolean | null;
+  isUncertain: boolean;
   confidence: number;
   productName: string;
   ingredientList: string[];
   nonVeganIngredients: string[];
+  uncertainIngredients: string[];
   reasoning: string;
   // Add fields Gemini might return or remove unused ones
 }
 
 interface IngredientAnalysisResult {
   isVegan: boolean | null;
+  isUncertain: boolean;
   confidence: number;
   nonVeganIngredients: string[];
+  uncertainIngredients: string[];
   allIngredients: string[];
   reasoning: string;
   usageUpdated?: boolean;
@@ -400,7 +404,17 @@ const analyzeImage = async (req: express.Request, res: express.Response, next: e
     console.log('Local validation result:', validationResult);
 
     // Example simplified status determination (replace with adapted logic)
-    const finalVeganStatus = analysisResult.isVegan === null ? null : (analysisResult.isVegan && validationResult.isVegan);
+    let finalVeganStatus = analysisResult.isVegan === null ? null : (analysisResult.isVegan && validationResult.isVegan);
+    
+    // --- Determine final uncertainty ---
+    // Combine uncertainty from Gemini and local validation
+    const finalIsUncertain = analysisResult.isUncertain;
+    
+    // If uncertain, isVegan must be null
+    if (finalIsUncertain && finalVeganStatus !== null) {
+        finalVeganStatus = null; 
+        console.log('Overriding finalVeganStatus to null due to uncertainty');
+    }
     
     // Check quality based on Gemini reasoning (example, needs refinement)
      const reasoningLower = analysisResult.reasoning?.toLowerCase() || "";
@@ -423,16 +437,26 @@ const analyzeImage = async (req: express.Request, res: express.Response, next: e
           ...(analysisResult.nonVeganIngredients || []), // Handle potentially missing field
           ...validationResult.nonVeganIngredients
         ]));
+        
+    const uncertainIngredients = finalIsUncertain
+      ? Array.from(new Set([
+          ...(analysisResult.uncertainIngredients || []),
+        ]))
+      : [];
 
     const finalResult: IngredientAnalysisResult = {
       isVegan: finalVeganStatus,
+      isUncertain: finalIsUncertain, // Added missing property
       confidence: Math.min(analysisResult.confidence, validationResult.confidence),
       allIngredients: analysisResult.ingredientList,
       nonVeganIngredients: nonVeganIngredients,
-      reasoning: analysisResult.reasoning || "Ingen detaljerad motivering angavs." // Provide default
+      uncertainIngredients: uncertainIngredients, // Added missing property
+      reasoning: analysisResult.reasoning || "Ingen detaljerad motivering angavs.",
+      usageUpdated: false, // Initialize as false
+      usageInfo: undefined // Initialize as undefined
     };
 
-    // Increment usage count (keep as is)
+    // Increment usage count and update usageInfo
     if (userId) {
       try {
         console.log('Incrementing analysis count for user:', userId);
@@ -443,11 +467,14 @@ const analyzeImage = async (req: express.Request, res: express.Response, next: e
         finalResult.usageInfo = {
           analysesUsed: countResult.analysesUsed,
           analysesLimit: countResult.analysesLimit,
-          remaining: countResult.analysesLimit - countResult.analysesUsed
+          // Calculate remaining based on the latest count
+          remaining: countResult.isPremium ? Infinity : Math.max(0, countResult.analysesLimit - countResult.analysesUsed), 
+          isPremium: countResult.isPremium 
         };
       } catch (error) {
         console.error('Failed to increment analysis count:', error);
         // Log error but don't fail the request just for this
+        finalResult.usageUpdated = false; // Mark as not updated if count failed
       }
     }
 

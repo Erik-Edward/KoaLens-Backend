@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { logger } from '../utils/logger';
-import videoAnalysisService from '../services/videoAnalysisService';
+import { VideoAnalysisService } from '../services/videoAnalysisService';
 
 // Define request type locally if not imported
 interface MediaAnalysisRequest {
@@ -9,6 +9,8 @@ interface MediaAnalysisRequest {
   preferredLanguage?: string;
   requestId?: string;
 }
+
+const videoAnalysisService = new VideoAnalysisService();
 
 export const analyzeVideo = async (_req: Request, res: Response): Promise<Response> => { // Added return type
   const startTime = Date.now(); // Track start time

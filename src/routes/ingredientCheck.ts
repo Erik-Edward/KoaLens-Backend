@@ -9,7 +9,7 @@ const router = express.Router();
 /**
  * Endpoint to check E304 directly
  */
-router.get('/check-e304', (req, res) => {
+router.get('/check-e304', (_req, res) => {
   logger.info('Running direct check for E304');
   
   // First check the exact E304 string
@@ -29,6 +29,17 @@ router.get('/check-e304', (req, res) => {
     e304Result,
     variationResults: results
   });
+});
+
+/**
+ * GET /api/check/ingredient
+ * Check the vegan status of a single ingredient
+ * Query parameters: ?name=INGREDIENT_NAME
+ */
+router.get('/ingredient', (_req: express.Request, res: express.Response) => {
+  const ingredientName = _req.query.name as string;
+
+  // ... existing code ...
 });
 
 export default router; 

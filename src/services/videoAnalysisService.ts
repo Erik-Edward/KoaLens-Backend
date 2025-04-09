@@ -13,22 +13,27 @@ import {
 
 // Import necessary types from @google/generative-ai
 import { 
-  FunctionDeclaration, 
   FunctionDeclarationsTool,
   SchemaType
 } from '@google/generative-ai';
 
+// Import types from analysisTypes.ts
+import { 
+  UsageInfo,
+  IngredientAnalysisResult
+} from '../types/analysisTypes';
+
 // Type definitions (borrowed from ../types/analysisTypes.ts)
-interface IngredientAnalysisResult {
-  name: string;
-  isVegan: boolean;
-  isUncertain?: boolean;
-  confidence: number;
-}
+// interface IngredientAnalysisResult {
+//   name: string;
+//   isVegan: boolean | null;
+//   isUncertain?: boolean;
+//   confidence: number;
+// }
 
 export interface VideoAnalysisResult {
   ingredients: IngredientAnalysisResult[];
-  isVegan: boolean;
+  isVegan: boolean | null;
   isUncertain?: boolean;
   confidence: number;
   reasoning?: string;
@@ -37,6 +42,7 @@ export interface VideoAnalysisResult {
   preferredLanguage?: string;
   uncertainIngredients: string[];
   nonVeganIngredients: string[];
+  usageInfo?: UsageInfo;
 }
 
 // -- Start: Define Zod Schema --
@@ -64,6 +70,7 @@ type IngredientAnalysisArgs = {
     reasoning?: string;
     confidence: number;
   }[];
+  usageInfo?: UsageInfo;
 };
 
 // Interface för en ingrediens
@@ -370,13 +377,43 @@ export class VideoAnalysisService {
         );
         
         const afterGeminiTime = Date.now();
+        // DETAILED LOGGING ADDED HERE
+        logger.info('Raw result object from geminiService.generateContentFromVideo:', JSON.stringify(result, null, 2));
+        if (result && result.response) {
+          logger.info('Raw result.response object:', JSON.stringify(result.response, null, 2));
+          logger.info('Raw result.response.functionCalls object:', JSON.stringify(result.response.functionCalls, null, 2));
+        } else {
+          logger.warn('result or result.response is missing after geminiService call');
+        }
+        // END DETAILED LOGGING
+        
         logger.info('Gemini API call completed', { 
           geminiApiCallMs: afterGeminiTime - beforeGeminiTime,
           totalElapsedMs: afterGeminiTime - startTime
         });
         
         const response = result.response;
-        const { functionCalls, firstFunctionCall } = this.safetyCheckFunctionCalls(response);
+        
+        // --- CORRECTED FUNCTION CALL EXTRACTION V2 ---
+        let extractedFunctionCalls: any[] = [];
+        try {
+          // Attempt to access the function call from the corrected path (singular)
+          const functionCall = response?.candidates?.[0]?.content?.parts?.[0]?.functionCall;
+          
+          if (functionCall) {
+            // If found, put it into the array
+            extractedFunctionCalls = [functionCall]; 
+            logger.info(`Successfully extracted 1 function call from response.candidates path.`);
+          } else {
+             logger.warn('Could not find functionCall in response using the expected path.');
+          }
+        } catch (extractionError: any) {
+          logger.error('Error during function call extraction logic', { error: extractionError.message });
+          extractedFunctionCalls = []; // Ensure it's an empty array on error
+        }
+        const functionCalls = extractedFunctionCalls; 
+        const firstFunctionCall = functionCalls.length > 0 ? functionCalls[0] : null;
+        // --- END CORRECTION V2 ---
         
         if (!functionCalls || functionCalls.length === 0) {
           logger.warn('No function calls detected in Gemini response, falling back to simplified approach');
@@ -676,25 +713,39 @@ export class VideoAnalysisService {
       }
 
       // Make sure isVegan, isUncertain and confidence have valid values
-      if (typeof parsedResult.isVegan !== 'boolean') {
-        // If there are ingredients that are clearly non-vegan, set isVegan to false
-        const hasNonVeganIngredients = parsedResult.ingredients.some((i: IngredientAnalysisResult) => i.isVegan === false && i.isUncertain !== true);
+      if (typeof parsedResult.isVegan !== 'boolean' && parsedResult.isVegan !== null) {
+        // Check if there are uncertain ingredients
+        const hasUncertainIngredients = parsedResult.ingredients.some((i: IngredientAnalysisResult) => i.isUncertain === true);
         
-        if (hasNonVeganIngredients) {
-          parsedResult.isVegan = false;
-          logger.info('Setting isVegan=false based on ingredient analysis (first-run protection)');
-        } else {
-          // IMPORTANT: For first-run, default to uncertain rather than non-vegan
-          parsedResult.isVegan = false; // Still false but we'll set isUncertain to true
+        if (hasUncertainIngredients) {
+          // If we have uncertain ingredients, use null for isVegan
+          parsedResult.isVegan = null;
           parsedResult.isUncertain = true;
-          logger.info('First-run protection: Setting isUncertain=true instead of immediate non-vegan default');
+          logger.info('Setting isVegan=null and isUncertain=true based on uncertain ingredients');
+        } else {
+          // If there are ingredients that are clearly non-vegan, set isVegan to false
+          const hasNonVeganIngredients = parsedResult.ingredients.some((i: IngredientAnalysisResult) => i.isVegan === false && i.isUncertain !== true);
+          
+          if (hasNonVeganIngredients) {
+            parsedResult.isVegan = false;
+            logger.info('Setting isVegan=false based on ingredient analysis');
+          } else {
+            // No uncertain or non-vegan ingredients, assume vegan
+            parsedResult.isVegan = true;
+            logger.info('Setting isVegan=true as default (no uncertain or non-vegan ingredients found)');
+          }
         }
       }
-
+      
       // If isUncertain isn't specified but we have uncertain ingredients, set it
       if (typeof parsedResult.isUncertain !== 'boolean') {
         const hasUncertainIngredients = parsedResult.ingredients.some((i: IngredientAnalysisResult) => i.isUncertain === true);
         parsedResult.isUncertain = hasUncertainIngredients;
+        
+        // If uncertain, make sure isVegan is null
+        if (hasUncertainIngredients) {
+          parsedResult.isVegan = null;
+        }
       }
 
       if (typeof parsedResult.confidence !== 'number') {
@@ -714,7 +765,7 @@ export class VideoAnalysisService {
       // Return preliminary result
       return {
         ingredients: parsedResult.ingredients || [],
-        isVegan: parsedResult.isVegan || false,
+        isVegan: parsedResult.isVegan,
         isUncertain: parsedResult.isUncertain || false,
         confidence: parsedResult.confidence || 0.5,
         reasoning: parsedResult.reasoning || '',
@@ -730,11 +781,11 @@ export class VideoAnalysisService {
           error: error.message,
           originalResponse: result
       });
-      // Return a default empty result on fatal processing error - SET UNCERTAIN TO TRUE
+      // Return a default empty result on fatal processing error - USE NULL for isVegan when uncertain
       return {
         ingredients: [],
-        isVegan: false,
-        isUncertain: true, // CHANGE: Default to uncertain on error
+        isVegan: null,
+        isUncertain: true, // Error cases should be uncertain
         confidence: 0, 
         reasoning: 'Kunde inte bearbeta analysresultatet. Osäker på produktens veganska status.',
         uncertainReasons: ['Tekniskt fel vid analys'],
@@ -892,44 +943,37 @@ export class VideoAnalysisService {
     
     // 1. Validate ingredients against database and update status/confidence
     for (const ingredient of preliminaryResult.ingredients) {
-      // --- BEGIN DEBUG LOGGING --- 
-      const ingredientNameForLog = ingredient.name.substring(0, 40) + (ingredient.name.length > 40 ? '...' : '');
-      logger.debug(`[Enhance Step 1] Processing ingredient "${ingredientNameForLog}"`, {
-          originalIsVegan: ingredient.isVegan,
-          originalIsUncertain: ingredient.isUncertain,
-          originalConfidence: ingredient.confidence
-      });
-      // --- END DEBUG LOGGING --- 
-
-      // Preserve original status for logging
+      // Preserve original status for logging and comparison
       const originalIsVegan = ingredient.isVegan;
       const originalIsUncertain = ingredient.isUncertain;
-      
+      const ingredientNameForLog = ingredient.name.substring(0, 40) + (ingredient.name.length > 40 ? '...' : ''); // For cleaner logs
+
+      logger.debug(`[Enhance Loop Start] Processing: "${ingredientNameForLog}"`, {
+          initialIsVegan: originalIsVegan,
+          initialIsUncertain: originalIsUncertain,
+          initialConfidence: ingredient.confidence
+      });
+
       // Check against database
       const dbStatus = checkIngredientStatus(ingredient.name);
-      
-      // --- BEGIN DEBUG LOGGING --- 
-      const dbStatusString = dbStatus.isVegan === null 
-          ? 'unknown' 
-          : dbStatus.isVegan 
-              ? 'vegan' 
-              : 'non-vegan';
-              
-      logger.debug(`[Enhance Step 2] DB check result for "${ingredientNameForLog}"`, {
-          dbStatus: dbStatusString,
-          dbIsUncertain: dbStatus.isUncertain,
-          dbReason: dbStatus.reason || ''
-      });
-      // --- END DEBUG LOGGING --- 
 
-      // Update ingredient status based on database - Fix: check for matchedItem instead of match
+      logger.debug(`[Enhance Loop DB Check] DB Result for "${ingredientNameForLog}"`, {
+          dbIsVegan: dbStatus.isVegan,
+          dbIsUncertain: dbStatus.isUncertain,
+          dbReason: dbStatus.reason || 'N/A',
+          dbMatchedItem: dbStatus.matchedItem || 'N/A'
+      });
+
+      // Update ingredient status based on database
+      let statusChanged = false;
       if (dbStatus.matchedItem) {
         if (dbStatus.isVegan === false) {
           // Definitely non-vegan according to database
           if (ingredient.isVegan !== false || ingredient.isUncertain === true) {
+            statusChanged = true;
             logIngredientCorrection({
               ingredient: ingredient.name,
-              originalStatus: originalIsVegan,
+              originalStatus: originalIsVegan === null ? false : originalIsVegan,
               originalIsUncertain: originalIsUncertain,
               correctedStatus: false,
               isUncertain: false,
@@ -940,48 +984,49 @@ export class VideoAnalysisService {
           ingredient.isVegan = false;
           ingredient.isUncertain = false;
           ingredient.confidence = 0.98; // High confidence from DB
-          
-          // Add to nonVeganIngredients if not already there
+
+          // Manage nonVegan/uncertain arrays
           if (!nonVeganIngredients.includes(ingredient.name)) {
             nonVeganIngredients.push(ingredient.name);
           }
-          // Remove from uncertainIngredients if it was there
           const uncertainIndex = uncertainIngredients.indexOf(ingredient.name);
           if (uncertainIndex !== -1) {
             uncertainIngredients.splice(uncertainIndex, 1);
           }
         } else if (dbStatus.isVegan === true) {
-          // Definitely vegan according to database
-          if (ingredient.isVegan !== true || ingredient.isUncertain === true) {
-            logIngredientCorrection({
+           // Definitely vegan according to database
+           if (ingredient.isVegan !== true || ingredient.isUncertain === true) {
+            statusChanged = true;
+             logIngredientCorrection({
               ingredient: ingredient.name,
-              originalStatus: originalIsVegan,
+              originalStatus: originalIsVegan === null ? false : originalIsVegan,
               originalIsUncertain: originalIsUncertain,
               correctedStatus: true,
               isUncertain: false,
               reason: `Database match (Vegan): ${dbStatus.reason || 'Known vegan ingredient'}`,
               confidence: 0.98
             });
-          }
-          ingredient.isVegan = true;
-          ingredient.isUncertain = false;
-          ingredient.confidence = 0.98; // High confidence from DB
-          
-          // Remove from both arrays if present
-          const nonVeganIndex = nonVeganIngredients.indexOf(ingredient.name);
-          if (nonVeganIndex !== -1) {
-            nonVeganIngredients.splice(nonVeganIndex, 1);
-          }
-          const uncertainIndex = uncertainIngredients.indexOf(ingredient.name);
-          if (uncertainIndex !== -1) {
-            uncertainIngredients.splice(uncertainIndex, 1);
-          }
+           }
+           ingredient.isVegan = true;
+           ingredient.isUncertain = false;
+           ingredient.confidence = 0.98; // High confidence from DB
+
+           // Manage nonVegan/uncertain arrays
+           const nonVeganIndex = nonVeganIngredients.indexOf(ingredient.name);
+           if (nonVeganIndex !== -1) {
+             nonVeganIngredients.splice(nonVeganIndex, 1);
+           }
+           const uncertainIndex = uncertainIngredients.indexOf(ingredient.name);
+           if (uncertainIndex !== -1) {
+             uncertainIngredients.splice(uncertainIndex, 1);
+           }
         } else if (dbStatus.isUncertain) {
           // Uncertain according to database
           if (!ingredient.isUncertain) {
+            statusChanged = true;
             logIngredientCorrection({
               ingredient: ingredient.name,
-              originalStatus: originalIsVegan,
+              originalStatus: originalIsVegan === null ? false : originalIsVegan,
               originalIsUncertain: originalIsUncertain,
               correctedStatus: false,
               isUncertain: true,
@@ -989,558 +1034,246 @@ export class VideoAnalysisService {
               confidence: 0.5
             });
           }
-          ingredient.isVegan = false;
+          ingredient.isVegan = null;
           ingredient.isUncertain = true;
           ingredient.confidence = 0.5; // Lower confidence for uncertain
-          
-          // Add to uncertainIngredients if not already there
+
+          // Manage nonVegan/uncertain arrays
           if (!uncertainIngredients.includes(ingredient.name)) {
             uncertainIngredients.push(ingredient.name);
           }
-          // Remove from nonVeganIngredients if it was there
-          const nonVeganIndex = nonVeganIngredients.indexOf(ingredient.name);
-          if (nonVeganIndex !== -1) {
-            nonVeganIngredients.splice(nonVeganIndex, 1);
-          }
+           const nonVeganIndex = nonVeganIngredients.indexOf(ingredient.name);
+           if (nonVeganIndex !== -1) {
+             nonVeganIngredients.splice(nonVeganIndex, 1);
+           }
         }
-        // If no database match, keep AI's assessment
-        
-        // --- BEGIN DEBUG LOGGING --- 
-        logger.debug(`[Enhance Step 3] Final status for "${ingredientNameForLog}" after DB check`, {
-            finalIsVegan: ingredient.isVegan,
-            finalIsUncertain: ingredient.isUncertain,
-            finalConfidence: ingredient.confidence
-        });
-        // --- END DEBUG LOGGING --- 
-      }
-    }
-    
-    // 2. Determine overall product vegan status based on ingredient analysis
-    let finalIsVegan = true;
-    let finalIsUncertain = false;
-    const finalUncertainReasons: string[] = [];
-    
-    // Check if any ingredient is non-vegan but not uncertain
-    const hasNonVegan = preliminaryResult.ingredients.some(ing => ing.isVegan === false && ing.isUncertain === false);
-    
-    // Check if any ingredient is uncertain about status
-    const hasUncertainIngredient = preliminaryResult.ingredients.some(ing => ing.isUncertain === true);
-    
-    if (hasNonVegan) {
-      // Definitely not vegan
-      finalIsVegan = false;
-      finalIsUncertain = false;
-    } else if (hasUncertainIngredient) {
-      // Uncertain
-      finalIsVegan = false;
-      finalIsUncertain = true;
-      finalUncertainReasons.push('Osäker vegansk status på grund av ingredienser som kan vara icke-veganska.');
-    }
-    
-    // 3. Collect detailed reasoning for improved explainability
-    const uncertainOrNonVeganIngredients = preliminaryResult.ingredients.filter(ing => 
-      ing.isVegan === false || ing.isUncertain === true
-    );
-    
-    // Ensure we have uncertainReasons to start with
-    if (preliminaryResult.uncertainReasons && preliminaryResult.uncertainReasons.length > 0) {
-      finalUncertainReasons.push(...preliminaryResult.uncertainReasons);
-    }
-    
-    // Build final reasoning based on status
-    let finalReasoning = "";
-    if (finalIsVegan) {
-      finalReasoning = "Produkten bedöms vara vegansk. Alla ingredienser verkar vara av växtbaserat ursprung.";
-    } else if (finalIsUncertain) {
-      // Find the uncertain ingredients and list them
-      const uncertainNames = uncertainOrNonVeganIngredients
-        .filter(ing => ing.isUncertain)
-        .map(ing => ing.name);
-      
-      finalReasoning = "Osäker vegansk status. ";
-      
-      if (uncertainNames.length > 0) {
-        finalReasoning += `Följande ingredienser har osäker status: ${uncertainNames.join(', ')}. `;
-      }
-      
-      if (finalUncertainReasons.length > 0) {
-        finalReasoning += finalUncertainReasons.join(' ');
-      }
-    } else {
-      // Non-vegan - list the problematic ingredients
-      const nonVeganNames = uncertainOrNonVeganIngredients
-        .filter(ing => !ing.isVegan && !ing.isUncertain)
-        .map(ing => ing.name);
-      
-      finalReasoning = `Produkten är inte vegansk. `;
-      
-      if (nonVeganNames.length > 0) {
-        finalReasoning += `Innehåller icke-veganska ingredienser: ${nonVeganNames.join(', ')}.`;
       } else {
-        finalReasoning += "Innehåller animaliska ämnen.";
+        // No DB match - log warning but keep AI's assessment
+        logger.warn(`[Enhance Loop No Match] No DB match for: "${ingredientNameForLog}". Keeping AI status.`);
+        // Ensure it's added to the correct list based on AI assessment if not already managed
+        if(ingredient.isVegan === false && !nonVeganIngredients.includes(ingredient.name) && !uncertainIngredients.includes(ingredient.name)) {
+            nonVeganIngredients.push(ingredient.name);
+        } else if(ingredient.isUncertain === true && !uncertainIngredients.includes(ingredient.name) && !nonVeganIngredients.includes(ingredient.name)) {
+            uncertainIngredients.push(ingredient.name);
+        }
       }
+
+      logger.debug(`[Enhance Loop End] Status for "${ingredientNameForLog}" after DB check:`, {
+          finalIsVegan: ingredient.isVegan,
+          finalIsUncertain: ingredient.isUncertain,
+          finalConfidence: ingredient.confidence,
+          statusChanged: statusChanged
+      });
+    } // End loop
+
+    // 2. Determine final overall status and confidence
+    let finalIsVegan: boolean | null = null; // Start as null
+    let finalIsUncertain = false;
+    let finalConfidence = 0.5; // Default confidence
+
+    const hasNonVegan = nonVeganIngredients.length > 0;
+    const hasUncertain = uncertainIngredients.length > 0;
+
+    if (hasNonVegan) {
+        // If any non-vegan ingredient exists, the product is definitely not strictly vegan.
+        finalIsVegan = false;
+        finalIsUncertain = hasUncertain; // It's non-vegan, but also uncertain if uncertain items exist
+        finalConfidence = hasUncertain ? 0.5 : 0.95; // Lower confidence if uncertainty remains, otherwise high
+        logger.debug('[Enhance Step 3] Determined status: Non-Vegan', { hasUncertain });
+    } else if (hasUncertain) {
+        // If only uncertain ingredients (and potentially known vegan ones) exist.
+        finalIsVegan = null; // Cannot confirm vegan status due to uncertainty.
+        finalIsUncertain = true;
+        finalConfidence = 0.5; // Medium confidence due to uncertainty.
+        logger.debug('[Enhance Step 3] Determined status: Uncertain');
+    } else {
+        // Only known vegan ingredients found.
+        finalIsVegan = true;
+        finalIsUncertain = false;
+        finalConfidence = 0.98; // High confidence.
+        logger.debug('[Enhance Step 3] Determined status: Vegan');
     }
     
-    // Calculate an overall confidence score based on the uncertainties
-    const confidenceFactor = hasUncertainIngredient ? 0.7 : 0.9;
-    const avgIngredientConfidence = preliminaryResult.ingredients.reduce(
-      (sum, ing) => sum + ing.confidence, 0
-    ) / preliminaryResult.ingredients.length;
+    // 3. Generate reasoning based on the final status
+    let reasoning = `Produkt analyserad: ${finalIsVegan === null ? 'oklar status' : finalIsVegan ? 'vegan' : 'icke-vegan'}`;
+    let uncertainReasons: string[] = [];
     
-    const finalConfidence = Math.min(
-      0.95, // Cap at 0.95 to avoid overconfidence
-      avgIngredientConfidence * confidenceFactor
-    );
+    if (finalIsUncertain) {
+      reasoning += '. Status är osäker.';
+      uncertainReasons.push('Status är osäker');
+    }
     
-    // Ensure final status has proper structure
-    const finalStatus = {
+    // 4. Create the final result object
+    const finalResult: VideoAnalysisResult = {
+      ingredients: preliminaryResult.ingredients,
       isVegan: finalIsVegan,
       isUncertain: finalIsUncertain,
       confidence: finalConfidence,
-      uncertainReasons: finalUncertainReasons,
-      // Include the explicit lists
-      nonVeganIngredients: nonVeganIngredients,
-      uncertainIngredients: uncertainIngredients
-    };
-    
-    logger.info('Enhanced analysis result complete', {
-      originalIsVegan: preliminaryResult.isVegan,
-      originalIsUncertain: preliminaryResult.isUncertain || false,
-      finalIsVegan: finalStatus.isVegan,
-      finalIsUncertain: finalStatus.isUncertain,
-      ingredientCount: preliminaryResult.ingredients.length,
-      nonVeganCount: nonVeganIngredients.length,
-      uncertainCount: uncertainIngredients.length,
-      finalConfidence: finalStatus.confidence.toFixed(2)
-    });
-    
-    return {
-      ingredients: preliminaryResult.ingredients,
-      isVegan: finalStatus.isVegan,
-      isUncertain: finalStatus.isUncertain,
-      confidence: finalStatus.confidence,
-      reasoning: finalReasoning,
-      uncertainReasons: finalStatus.uncertainReasons.length > 0 ? finalStatus.uncertainReasons : undefined,
-      videoProcessed: true,
-      preferredLanguage: 'sv',
-      uncertainIngredients: finalStatus.uncertainIngredients,
-      nonVeganIngredients: finalStatus.nonVeganIngredients
-    };
-  }
-  
-  /**
-   * Maps arguments from the recordIngredientAnalysis function call to a PRELIMINARY VideoAnalysisResult.
-   * Uses the translated_name provided by the AI.
-   * @param args The arguments object from the function call.
-   * @returns A preliminary VideoAnalysisResult object.
-   */
-  private mapFunctionArgsToPreliminaryResult(args: IngredientAnalysisArgs): VideoAnalysisResult {
-    // Map product status to isVegan & isUncertain
-    let isVegan = false;
-    let isUncertain = false;
-    
-    if (args.product_status === "sannolikt vegansk") {
-      isVegan = true;
-      isUncertain = false;
-    } else if (args.product_status === "sannolikt icke-vegansk") {
-      isVegan = false;
-      isUncertain = false;
-    } else if (args.product_status === "oklart") {
-      isVegan = false;
-      isUncertain = true;
-    }
-    
-    // Samla anledningar till osäkerhet om det behövs
-    const uncertainReasons: string[] = [];
-    
-    // Create specific lists for frontend display
-    const uncertainIngredients: string[] = [];
-    const nonVeganIngredients: string[] = [];
-    
-    // Mappa ingredienser
-    const mappedIngredients: IngredientAnalysisResult[] = args.ingredients.map(ingredient => {
-      // Använd det översatta namnet istället för originalnamnet
-      const name = ingredient.translated_name || ingredient.name;
-      
-      let isIngredientVegan = true;
-      let isIngredientUncertain = false;
-      
-      if (ingredient.status === "icke-vegansk") {
-        isIngredientVegan = false;
-        isIngredientUncertain = false;
-        nonVeganIngredients.push(name);
-        // Lägg endast till anledning om den finns
-        if (ingredient.reasoning) {
-          uncertainReasons.push(`Ingrediensen "${name}" är inte vegansk: ${ingredient.reasoning}`);
-        }
-      } else if (ingredient.status === "osäker") {
-        isIngredientVegan = false;
-        isIngredientUncertain = true;
-        uncertainIngredients.push(name);
-        // Lägg endast till anledning om den finns
-        if (ingredient.reasoning) {
-          uncertainReasons.push(`Ingrediensen "${name}" har osäker vegansk status: ${ingredient.reasoning}`);
-        }
-      }
-      
-      return {
-        name, // Använd det översatta namnet i appen
-        isVegan: isIngredientVegan,
-        isUncertain: isIngredientUncertain,
-        confidence: ingredient.confidence
-      };
-    });
-
-    // Check if any ingredient is marked as uncertain
-    const hasUncertainIngredient = mappedIngredients.some(ingredient => ingredient.isUncertain);
-    
-    // If we have an uncertain ingredient, always mark the product as uncertain
-    if (hasUncertainIngredient) {
-      isVegan = false;
-      isUncertain = true;
-    }
-    
-    // Om vi inte har några specifika anledningar men resultatet är osäkert,
-    // lägg till en generisk förklaring
-    if (isUncertain && uncertainReasons.length === 0) {
-      uncertainReasons.push("Osäker vegansk status. Några ingredienser har oklar vegansk status.");
-    }
-
-    // Skapa lämplig reasoning-text
-    let reasoning = isVegan 
-                  ? "Produkten innehåller inga icke-veganska ingredienser."
-                  : isUncertain
-                    ? "Osäker vegansk status. Orsaker: " + uncertainReasons.join("; ")
-                    : "Innehåller icke-veganska ingredienser: " + nonVeganIngredients.join(", ") + ".";
-
-    return {
-      ingredients: mappedIngredients,
-      isVegan: isVegan,
-      isUncertain: isUncertain,
-      confidence: args.overall_confidence || 0.8,
       reasoning: reasoning,
       uncertainReasons: uncertainReasons,
-      // Add explicit lists for frontend display
-      uncertainIngredients: uncertainIngredients,
-      nonVeganIngredients: nonVeganIngredients,
-      videoProcessed: true,
-      preferredLanguage: 'sv'
-    };
-  }
-  
-  /**
-   * Maps arguments from the extractRecipeData function call to a PRELIMINARY VideoAnalysisResult.
-   * @param args The arguments object from the extractRecipeData function call.
-   * @returns A preliminary VideoAnalysisResult object.
-   */
-  private mapExtractRecipeDataToPreliminaryResult(args: any): VideoAnalysisResult {
-    logger.debug('Mapping extractRecipeData response to preliminary result structure.');
-    
-    // Handle raw ingredient strings from extractRecipeData function
-    const mappedIngredients = args.ingredients.map((ingredient: string) => {
-      // Simple heuristic to determine if an ingredient is likely vegan
-      const nonVeganIndicators = [
-        'mjölk', 'milk', 'cream', 'grädde', 'ägg', 'egg', 'cheese', 'ost', 
-        'honey', 'honung', 'meat', 'kött', 'beef', 'nöt', 'chicken', 'kyckling',
-        'pork', 'fläsk', 'butter', 'smör', 'gelatin', 'fish', 'fisk'
-      ];
-      
-      const containsNonVegan = nonVeganIndicators.some(indicator => 
-        ingredient.toLowerCase().includes(indicator.toLowerCase())
-      );
-      
-      // Check for common uncertain ingredients
-      const uncertainIndicators = [
-        'arom', 'flavor', 'e-number', 'e-nummer', 'emulgator', 'emulsifier',
-        'färgämne', 'coloring', 'tillsats', 'additive'
-      ];
-      
-      const isUncertain = uncertainIndicators.some(indicator => 
-        ingredient.toLowerCase().includes(indicator.toLowerCase())
-      );
-      
-      return {
-        name: ingredient.trim(),
-        isVegan: !containsNonVegan && !isUncertain,
-        isUncertain: isUncertain,
-        confidence: 0.6, // Lower confidence as this is based on heuristics
-      };
-    });
-
-    // Use titles array if available to help determine overall vegan status
-    let overallVeganStatus = true; // Default optimistic
-    let confidence = 0.5;
-    
-    // If any ingredient is non-vegan, the product is non-vegan
-    if (mappedIngredients.some((ing: IngredientAnalysisResult) => ing.isVegan === false && ing.isUncertain !== true)) {
-      overallVeganStatus = false;
-      confidence = 0.7;
-    }
-    // If only uncertain ingredients, mark as uncertain
-    else if (mappedIngredients.some((ing: IngredientAnalysisResult) => ing.isUncertain === true)) {
-      overallVeganStatus = false; // Not definitively vegan
-      confidence = 0.5;
-    }
-    
-    // Look for vegan indicators in titles if available
-    if (args.titles && Array.isArray(args.titles) && args.titles.length > 0) {
-      const veganIndicatorsInTitle = args.titles.some((title: string) => 
-        title.toLowerCase().includes('vegan') || title.toLowerCase().includes('vegansk')
-      );
-      
-      if (veganIndicatorsInTitle) {
-        confidence = Math.min(confidence + 0.2, 0.9); // Boost confidence but cap at 0.9
-      }
-    }
-
-    return {
-      ingredients: mappedIngredients,
-      isVegan: overallVeganStatus,
-      isUncertain: mappedIngredients.some((ing: IngredientAnalysisResult) => ing.isUncertain === true),
-      confidence: confidence,
-      reasoning: 'Baserat på extraherade ingredienser från livsmedelsförpackningen',
-      uncertainReasons: [],
       videoProcessed: true,
       preferredLanguage: 'sv',
-      uncertainIngredients: [],
-      nonVeganIngredients: []
+      uncertainIngredients: uncertainIngredients,
+      nonVeganIngredients: nonVeganIngredients
     };
+    
+    logger.info('Successfully enhanced analysis result', {
+      ingredientCount: finalResult.ingredients.length,
+      isVegan: finalResult.isVegan,
+      isUncertain: finalResult.isUncertain,
+      confidence: finalResult.confidence,
+      reasoning: finalResult.reasoning,
+      uncertainReasons: finalResult.uncertainReasons,
+      videoProcessed: finalResult.videoProcessed,
+      preferredLanguage: finalResult.preferredLanguage,
+      uncertainIngredients: finalResult.uncertainIngredients,
+      nonVeganIngredients: finalResult.nonVeganIngredients
+    });
+    
+    return finalResult;
   }
-  
-  /**
-   * Builds the simplified prompt used for retry attempts
-   */
-  private buildSimplifiedRetryPrompt(): string {
-    return `
-Analysera denna matprodukt. Använd verktyget 'recordIngredientAnalysis' för att strukturera ditt svar.
-Lista alla ingredienser du kan se på förpackningen. Översätt ingredienserna till svenska.
-För varje ingrediens, ange status ('vegansk', 'icke-vegansk', 'osäker'). Ge en kort motivering ('reasoning').
-Ange en konfidens (0.0-1.0).
 
-Specifik Regel: 'Arom' utan specificerad källa ska klassas som 'osäker'.
-
-Ange produktens övergripande status ('sannolikt vegansk', 'sannolikt icke-vegansk', 'oklart') och konfidens.
-`;
-  }
-  
-  /**
-   * Build a prompt for the AI to analyze food product ingredients and translate them.
-   */
-  private buildAnalysisPrompt(): string {
-    // HÅRDKODAT KRAV: Alltid svenska!
-    const targetLanguage = 'sv'; 
-    const languageName = 'Swedish';
-
-    // Updated prompt instructing AI to translate to Swedish
-    return `
-Du är en expert på att analysera matprodukter och identifiera deras ingredienser för att avgöra om produkten är vegansk.
-
-MÅLSPRÅK för översättning och ALLA returnerade ingrediensnamn: ${languageName} (${targetLanguage})
-
-INSTRUKTIONER:
-1. Analysera videon NOGGRANT. Identifiera ingredienserna som tydligt VISAS på produktens förpackning.
-2. Använd verktyget 'recordIngredientAnalysis' för att strukturera och returnera ditt svar.
-3. För varje identifierad ingrediens:
-   a. Ange ingrediensens **originalnamn** (som det står på förpackningen) i fältet 'name'.
-   b. **Översätt originalnamnet till ${languageName}.** Ange den svenska översättningen i fältet 'translated_name'. **DET ÄR KRITISKT VIKTIGT att 'translated_name' ALLTID innehåller den korrekta svenska översättningen.** Om en översättning mot förmodan inte är möjlig, ange originalnamnet i 'translated_name' och notera detta i 'reasoning'.
-   c. Ange dess status: 'vegansk', 'icke-vegansk', 'osäker'.
-   d. SPECIFIK REGEL: Ingrediensen 'Arom' (eller motsvarande) ska klassificeras som 'osäker' om dess ursprung inte specificeras.
-   e. Ange en konfidenspoäng (0.0-1.0).
-   f. VIKTIGT: För 'icke-vegansk' eller 'osäker' status, MÅSTE du ange en kort motivering ('reasoning') på ${languageName}.
-4. Ange produktens övergripande status ('sannolikt vegansk', 'sannolikt icke-vegansk', 'oklart') och en övergripande konfidenspoäng.
-5. Inkludera ALLA identifierade ingredienser, men lista varje unik ingrediens endast EN gång (baserat på originalnamn).
-6. Basera din analys ENDAST på vad som FAKTISKT SYNS i videon.
-
-Använd verktyget 'recordIngredientAnalysis'. **SÄKERSTÄLL ATT ALLA INGREDIENSNAMN DU RETURNERAR I FUNKTIONSANROPETS ARGUMENT, SÄRSKILT I FÄLTET 'translated_name', ALLTID ÄR PÅ ${languageName} (${targetLanguage}).**
-`;
-  }
-  
-  /**
-   * Get file extension based on MIME type
-   */
   private getFileExtension(mimeType: string): string {
-    const mimeToExt: Record<string, string> = {
+    const extensions: { [key: string]: string } = {
       'video/mp4': 'mp4',
       'video/quicktime': 'mov',
       'video/x-msvideo': 'avi',
-      'video/webm': 'webm',
-      'video/3gpp': '3gp',
-      'video/x-matroska': 'mkv'
+      'video/webm': 'webm'
     };
-    
-    return mimeToExt[mimeType] || 'mp4'; // Default to mp4
+    return extensions[mimeType] || 'mp4';
   }
-  
-  /**
-   * Clean up temporary files
-   */
-  private cleanupTempFiles(...filePaths: string[]): void {
-    for (const filePath of filePaths) {
-      try {
-        if (filePath && fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
-          logger.debug('Cleaned up temporary file', { filePath });
-        }
-      } catch (error) {
-        logger.warn('Failed to clean up temporary file', { filePath, error });
+
+  private cleanupTempFiles(tempVideoPath: string, optimizedVideoPath: string): void {
+    try {
+      if (tempVideoPath && fs.existsSync(tempVideoPath)) {
+        fs.unlinkSync(tempVideoPath);
       }
+      if (optimizedVideoPath && optimizedVideoPath !== tempVideoPath && fs.existsSync(optimizedVideoPath)) {
+        fs.unlinkSync(optimizedVideoPath);
+      }
+    } catch (error) {
+      logger.warn('Error cleaning up temporary files', { error });
     }
   }
 
-  // Fixa funktionsdeklaration så att den returnerar rätt typ
-  private createFunctionDeclarations(): FunctionDeclarationsTool[] {
-    // Definiera ett korrekt funktionsdeklarationsobjekt som matchar förväntat format
-    const extractRecipeFunction: FunctionDeclaration = {
-      name: "extractRecipeData",
-      description: "Extracts recipe ingredients, instructions, and title from video",
-      parameters: {
-        type: SchemaType.OBJECT,
-        properties: {
-          ingredients: {
-            type: SchemaType.ARRAY,
-            items: {
-              type: SchemaType.STRING
-            },
-            description: "List of ingredients mentioned in the video"
-          },
-          instructions: {
-            type: SchemaType.ARRAY,
-            items: {
-              type: SchemaType.STRING
-            },
-            description: "List of cooking instructions shown in the video"
-          },
-          titles: {
-            type: SchemaType.ARRAY,
-            items: {
-              type: SchemaType.STRING
-            },
-            description: "Possible titles for this recipe based on the video content"
-          }
-        },
-        required: ["ingredients", "instructions", "titles"]
-      }
-    };
-    
-    // Definiera även den ursprungliga funktionen vi hoppades använda
-    const recordIngredientAnalysisFunction: FunctionDeclaration = {
-      name: "recordIngredientAnalysis",
-      description: "Records analysis of ingredients from a food product to determine vegan status",
-      parameters: {
-        type: SchemaType.OBJECT,
-        properties: {
-          product_status: {
-            type: SchemaType.STRING,
-            enum: ["sannolikt vegansk", "sannolikt icke-vegansk", "oklart"],
-            description: "The overall vegan status of the product based on ingredient analysis",
-            format: "enum"
-          },
-          overall_confidence: {
-            type: SchemaType.NUMBER,
-            description: "Confidence score (0.0-1.0) for the overall vegan status determination"
-          },
-          ingredients: {
-            type: SchemaType.ARRAY,
-            items: {
-              type: SchemaType.OBJECT,
-              properties: {
-                name: {
-                  type: SchemaType.STRING,
-                  description: "Original ingredient name as shown on the packaging"
-                },
-                translated_name: {
-                  type: SchemaType.STRING,
-                  description: "Ingredient name translated to requested language"
-                },
-                status: {
-                  type: SchemaType.STRING,
-                  enum: ["vegansk", "icke-vegansk", "osäker"],
-                  description: "Vegan status of the individual ingredient",
-                  format: "enum"
-                },
-                reasoning: {
-                  type: SchemaType.STRING,
-                  description: "Reasoning for non-vegan or uncertain status"
-                },
-                confidence: {
-                  type: SchemaType.NUMBER,
-                  description: "Confidence score (0.0-1.0) for this ingredient's status"
-                }
-              },
-              required: ["name", "translated_name", "status", "confidence"]
-            },
-            description: "List of ingredients with their vegan status analysis"
-          }
-        },
-        required: ["product_status", "overall_confidence", "ingredients"]
-      }
-    };
-
-    // Returnera en array med båda funktionsdeklarationerna
-    return [
-      {
-        functionDeclarations: [recordIngredientAnalysisFunction, extractRecipeFunction]
-      }
-    ];
-  }
-
-  /**
-   * Hjälpfunktion som säkerhetskontrollerar function calls
-   */
-  private safetyCheckFunctionCalls(response: any): { functionCalls: any[] | null; firstFunctionCall: any | null; functionCallName: string } {
-    // Kontrollera om response.functionCalls är en funktion
-    const hasFunctionCalls = response && 
-                           typeof response.functionCalls === 'function';
-    
-    let functionCalls: any[] | null = null;
-    let firstFunctionCall: any | null = null;
-    let functionCallName = 'none';
-    
-    if (hasFunctionCalls) {
-      try {
-        functionCalls = response.functionCalls();
-        if (Array.isArray(functionCalls) && functionCalls.length > 0) {
-          firstFunctionCall = functionCalls[0];
-          if (firstFunctionCall && typeof firstFunctionCall.name === 'string') {
-            functionCallName = firstFunctionCall.name;
-          }
-        }
-      } catch (error: any) {
-        logger.warn('Error accessing function calls', { error: error.message });
-      }
-    }
-    
-    logger.debug('Received response from Gemini', { 
-      hasFunctionCalls: !!functionCalls && functionCalls.length > 0,
-      functionCallName
-    });
-    
-    return { functionCalls, firstFunctionCall, functionCallName };
-  }
-
-  /**
-   * Build a more compact analysis prompt for larger videos
-   * Optimized version of buildAnalysisPrompt with fewer tokens
-   */
   private buildCompactAnalysisPrompt(preferredLanguage: string): string {
-    const prompt = `
-Analysera videon för att snabbt identifiera ingredienser på produktens förpackning.
+    // Updated prompt to strongly enforce function calling
+    return `Analysera ingredienserna i videon. Använd ALLTID funktionen 'recordIngredientAnalysis' för att rapportera resultatet. Svara INTE med vanlig text, anropa endast funktionen. Analysera på ${preferredLanguage}.`;
+  }
 
-SPRÅK: ${preferredLanguage || 'Swedish'}
+  private buildAnalysisPrompt(): string {
+    // Updated prompt to strongly enforce function calling
+    return `Gör en detaljerad analys av ingredienserna som visas i videon för att avgöra om produkten är vegansk. 
+Använd ALLTID funktionen 'recordIngredientAnalysis' för att strukturera och rapportera ditt resultat. 
+Svara ENDAST med ett anrop till funktionen 'recordIngredientAnalysis'. Inkludera ALLA identifierade ingredienser. 
+Analysera på svenska.`;
+  }
 
-UPPGIFT:
-1. Identifiera ingredienser som visas på förpackningen
-2. Klassificera varje ingrediens som "vegansk", "icke-vegansk" eller "osäker"
-3. Ange en konfidenspoäng (0.0-1.0) för varje klassificering
-4. Ge en övergripande bedömning av produkten
-5. Använd verktyget "recordIngredientAnalysis" för att strukturera svaret
+  private createFunctionDeclarations(): FunctionDeclarationsTool[] {
+    return [{ 
+      functionDeclarations: [
+        {
+          name: 'recordIngredientAnalysis',
+          description: 'Record the analysis of ingredients',
+          parameters: {
+            type: SchemaType.OBJECT,
+            properties: {
+              product_status: {
+                type: SchemaType.STRING,
+                enum: ['sannolikt vegansk', 'sannolikt icke-vegansk', 'oklart'] 
+              },
+              overall_confidence: {
+                type: SchemaType.NUMBER,
+              },
+              ingredients: {
+                type: SchemaType.ARRAY,
+                items: {
+                  type: SchemaType.OBJECT,
+                  properties: {
+                    name: { type: SchemaType.STRING },
+                    translated_name: { type: SchemaType.STRING },
+                    status: {
+                      type: SchemaType.STRING,
+                      enum: ['vegansk', 'icke-vegansk', 'osäker'] 
+                    },
+                    reasoning: { type: SchemaType.STRING },
+                    confidence: {
+                      type: SchemaType.NUMBER,
+                    }
+                  },
+                  required: ['name', 'translated_name', 'status', 'confidence']
+                }
+              }
+            },
+            required: ['product_status', 'overall_confidence', 'ingredients']
+          }
+        }
+      ]
+    }];
+  }
 
-Fokusera enbart på vad som faktiskt visas i videon.
-`;
-    return prompt;
+  private safetyCheckFunctionCalls(response: any): { functionCalls: any[], firstFunctionCall: any } {
+    const functionCalls = response.functionCalls || [];
+    const firstFunctionCall = functionCalls.length > 0 ? functionCalls[0] : null;
+    return { functionCalls, firstFunctionCall };
+  }
+
+  private mapExtractRecipeDataToPreliminaryResult(args: any): VideoAnalysisResult {
+    const ingredients = args.ingredients.map((ing: any) => ({
+      name: ing.name,
+      isVegan: ing.isVegan ?? null,
+      isUncertain: ing.isUncertain ?? false,
+      confidence: ing.confidence ?? 0.5
+    }));
+
+    const hasUncertainIngredients = ingredients.some((ing: IngredientAnalysisResult) => ing.isUncertain);
+    const hasNonVeganIngredients = ingredients.some((ing: IngredientAnalysisResult) => ing.isVegan === false);
+
+    return {
+      ingredients,
+      isVegan: hasUncertainIngredients ? null : !hasNonVeganIngredients,
+      isUncertain: hasUncertainIngredients,
+      confidence: 0.5,
+      reasoning: '',
+      uncertainReasons: [],
+      videoProcessed: true,
+      preferredLanguage: 'sv',
+      uncertainIngredients: ingredients.filter((ing: IngredientAnalysisResult) => ing.isUncertain).map((ing: IngredientAnalysisResult) => ing.name),
+      nonVeganIngredients: ingredients.filter((ing: IngredientAnalysisResult) => ing.isVegan === false).map((ing: IngredientAnalysisResult) => ing.name)
+    };
+  }
+
+  private mapFunctionArgsToPreliminaryResult(args: IngredientAnalysisArgs): VideoAnalysisResult {
+    const ingredients = args.ingredients.map(ing => ({
+      name: ing.translated_name,
+      isVegan: ing.status === 'vegansk' ? true : ing.status === 'icke-vegansk' ? false : null,
+      isUncertain: ing.status === 'osäker',
+      confidence: ing.confidence
+    }));
+
+    const result: VideoAnalysisResult = {
+      ingredients,
+      isVegan: args.product_status === 'sannolikt vegansk' ? true : 
+               args.product_status === 'sannolikt icke-vegansk' ? false : null,
+      isUncertain: args.product_status === 'oklart',
+      confidence: args.overall_confidence,
+      reasoning: '',
+      uncertainReasons: [],
+      videoProcessed: true,
+      preferredLanguage: 'sv',
+      uncertainIngredients: ingredients.filter((ing: IngredientAnalysisResult) => ing.isUncertain).map((ing: IngredientAnalysisResult) => ing.name),
+      nonVeganIngredients: ingredients.filter((ing: IngredientAnalysisResult) => ing.isVegan === false).map((ing: IngredientAnalysisResult) => ing.name)
+    };
+    
+    // Add usageInfo if it exists in args
+    if (args.usageInfo) {
+      result.usageInfo = args.usageInfo;
+    }
+    
+    return result;
+  }
+
+  private buildSimplifiedRetryPrompt(): string {
+    return 'Analysera ingredienserna i denna produkt och avgör om den är vegansk. Svara på svenska.';
   }
 }
-
-// Export a singleton instance
-const videoAnalysisService = new VideoAnalysisService();
-export default videoAnalysisService; 
