@@ -126,6 +126,7 @@ export const DEFINITELY_NON_VEGAN = new Set([
     'äppelcidervinäger', 'balsamvinäger',
     'vinäger', 'ättika',
     'vinsyra', 'askorbinsyra',
+    'senap', 'mustard',
     
     // Växtbaserade mjölk och mejeri
     'kokosmjölk', 'kokosgrädde', 'kokosdryck',
@@ -153,6 +154,10 @@ export const DEFINITELY_NON_VEGAN = new Set([
     'ärtprotein', 'sojaprotein',
     'havreprotein', 'veteprotein',
     'seitan', 'tempeh', 'tofu',
+    // Added common vegan staples
+    'vetemjöl', 'wheat flour',
+    'jäst', 'yeast',
+    'jästextrakt', 'yeast extract',
     
     // Grönsaker och frukter som kan misstas
     'äggplanta',

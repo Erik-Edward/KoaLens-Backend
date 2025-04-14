@@ -32,14 +32,30 @@ router.get('/check-e304', (_req, res) => {
 });
 
 /**
- * GET /api/check/ingredient
- * Check the vegan status of a single ingredient
- * Query parameters: ?name=INGREDIENT_NAME
+ * GET /ingredient - Check the status of a single ingredient.
+ * Query parameter: ?name=<ingredient_name>
  */
-router.get('/ingredient', (_req: express.Request, res: express.Response) => {
+router.get('/ingredient', (_req: express.Request, _res: express.Response) => {
+  // Entire logic commented out as it was unused and causing errors
+  /*
   const ingredientName = _req.query.name as string;
 
-  // ... existing code ...
+  // If no ingredient name is provided, return an error
+  if (!ingredientName) {
+    return _res.status(400).json({
+      error: 'No ingredient name provided'
+    });
+  }
+  
+  const result = checkIngredientStatus(ingredientName);
+  logger.info(`${ingredientName} check result: ${JSON.stringify(result)}`);
+  
+  _res.json({
+    message: 'Ingredient check completed',
+    ingredientName,
+    result
+  });
+  */
 });
 
 export default router; 

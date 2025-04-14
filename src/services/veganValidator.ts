@@ -29,10 +29,13 @@ export interface ValidationResult {
 /**
  * Normaliserar en sträng genom att hantera svenska tecken och formatering
  */
+// Exportera funktionen så att den kan återanvändas
 export function normalizeString(str: string): string {
   return str
     .toLowerCase()
     .trim()
+    // Remove common formatting characters (like bold markers)
+    .replace(/[*_~]/g, '') 
     .replace(/å/g, 'a')
     .replace(/ä/g, 'a')
     .replace(/ö/g, 'o')

@@ -318,7 +318,7 @@ export class VideoAnalysisService {
       
       // OPTIMIZATION: Use different prompts based on video size for better performance
       const prompt = videoSizeMB > 8
-        ? this.buildCompactAnalysisPrompt(preferredLanguage) // More compact prompt for larger videos
+        ? this.buildCompactAnalysisPrompt() // More compact prompt for larger videos
         : this.buildAnalysisPrompt();      // Standard detailed prompt
       
       // Create function declarations for Gemini
@@ -771,7 +771,6 @@ export class VideoAnalysisService {
         reasoning: parsedResult.reasoning || '',
         uncertainReasons: parsedResult.uncertainReasons || [],
         videoProcessed: true,
-        preferredLanguage: 'sv',
         uncertainIngredients: [],
         nonVeganIngredients: []
       };
@@ -790,7 +789,6 @@ export class VideoAnalysisService {
         reasoning: 'Kunde inte bearbeta analysresultatet. Osäker på produktens veganska status.',
         uncertainReasons: ['Tekniskt fel vid analys'],
         videoProcessed: true,
-        preferredLanguage: 'sv',
         uncertainIngredients: [],
         nonVeganIngredients: []
       };
@@ -1094,13 +1092,24 @@ export class VideoAnalysisService {
         logger.debug('[Enhance Step 3] Determined status: Vegan');
     }
     
-    // 3. Generate reasoning based on the final status
-    let reasoning = `Produkt analyserad: ${finalIsVegan === null ? 'oklar status' : finalIsVegan ? 'vegan' : 'icke-vegan'}`;
-    let uncertainReasons: string[] = [];
-    
-    if (finalIsUncertain) {
-      reasoning += '. Status är osäker.';
-      uncertainReasons.push('Status är osäker');
+    // 3. Generate reasoning based on the final status and populate uncertainReasons
+    let reasoning = '';
+    let uncertainReasons: string[] = []; // Keep this to potentially populate later if needed
+
+    if (finalIsVegan === true) {
+        reasoning = 'Produkt analyserad: vegan';
+    } else if (finalIsVegan === false) {
+        reasoning = 'Produkt analyserad: icke-vegan';
+        // Do NOT add ". Status är osäker." here, even if finalIsUncertain might be true.
+        // The frontend will show the non-vegan ingredients as the explanation.
+        if (finalIsUncertain) {
+             // If we still want to capture the reason for uncertainty internally or for details:
+             uncertainReasons.push('Innehåller icke-veganska ingredienser samt ingredienser med osäker status.');
+        }
+    } else { // finalIsVegan === null (implicitly means finalIsUncertain is true)
+        reasoning = 'Produkt analyserad: oklar status';
+        // Add a clear reason why it's uncertain
+        uncertainReasons.push('Status är osäker på grund av en eller flera ingredienser med okänt ursprung.'); 
     }
     
     // 4. Create the final result object
@@ -1112,7 +1121,6 @@ export class VideoAnalysisService {
       reasoning: reasoning,
       uncertainReasons: uncertainReasons,
       videoProcessed: true,
-      preferredLanguage: 'sv',
       uncertainIngredients: uncertainIngredients,
       nonVeganIngredients: nonVeganIngredients
     };
@@ -1125,7 +1133,6 @@ export class VideoAnalysisService {
       reasoning: finalResult.reasoning,
       uncertainReasons: finalResult.uncertainReasons,
       videoProcessed: finalResult.videoProcessed,
-      preferredLanguage: finalResult.preferredLanguage,
       uncertainIngredients: finalResult.uncertainIngredients,
       nonVeganIngredients: finalResult.nonVeganIngredients
     });
@@ -1156,9 +1163,9 @@ export class VideoAnalysisService {
     }
   }
 
-  private buildCompactAnalysisPrompt(preferredLanguage: string): string {
-    // Updated prompt to strongly enforce function calling
-    return `Analysera ingredienserna i videon. Använd ALLTID funktionen 'recordIngredientAnalysis' för att rapportera resultatet. Svara INTE med vanlig text, anropa endast funktionen. Analysera på ${preferredLanguage}.`;
+  private buildCompactAnalysisPrompt(): string {
+    // Updated prompt to strongly enforce function calling AND Swedish names
+    return `Analysera ingredienserna i videon. Använd ALLTID funktionen 'recordIngredientAnalysis' för att rapportera resultatet. Svara INTE med vanlig text, anropa endast funktionen. Alla ingrediensnamn i svaret, speciellt i fältet 'translated_name', MÅSTE vara på svenska. Analysera på svenska.`;
   }
 
   private buildAnalysisPrompt(): string {
@@ -1180,7 +1187,8 @@ Analysera på svenska.`;
             properties: {
               product_status: {
                 type: SchemaType.STRING,
-                enum: ['sannolikt vegansk', 'sannolikt icke-vegansk', 'oklart'] 
+                enum: ['sannolikt vegansk', 'sannolikt icke-vegansk', 'oklart'], 
+                format: 'enum',
               },
               overall_confidence: {
                 type: SchemaType.NUMBER,
@@ -1194,7 +1202,8 @@ Analysera på svenska.`;
                     translated_name: { type: SchemaType.STRING },
                     status: {
                       type: SchemaType.STRING,
-                      enum: ['vegansk', 'icke-vegansk', 'osäker'] 
+                      enum: ['vegansk', 'icke-vegansk', 'osäker'], 
+                      format: 'enum',
                     },
                     reasoning: { type: SchemaType.STRING },
                     confidence: {
@@ -1210,12 +1219,6 @@ Analysera på svenska.`;
         }
       ]
     }];
-  }
-
-  private safetyCheckFunctionCalls(response: any): { functionCalls: any[], firstFunctionCall: any } {
-    const functionCalls = response.functionCalls || [];
-    const firstFunctionCall = functionCalls.length > 0 ? functionCalls[0] : null;
-    return { functionCalls, firstFunctionCall };
   }
 
   private mapExtractRecipeDataToPreliminaryResult(args: any): VideoAnalysisResult {
@@ -1237,7 +1240,6 @@ Analysera på svenska.`;
       reasoning: '',
       uncertainReasons: [],
       videoProcessed: true,
-      preferredLanguage: 'sv',
       uncertainIngredients: ingredients.filter((ing: IngredientAnalysisResult) => ing.isUncertain).map((ing: IngredientAnalysisResult) => ing.name),
       nonVeganIngredients: ingredients.filter((ing: IngredientAnalysisResult) => ing.isVegan === false).map((ing: IngredientAnalysisResult) => ing.name)
     };
@@ -1260,7 +1262,6 @@ Analysera på svenska.`;
       reasoning: '',
       uncertainReasons: [],
       videoProcessed: true,
-      preferredLanguage: 'sv',
       uncertainIngredients: ingredients.filter((ing: IngredientAnalysisResult) => ing.isUncertain).map((ing: IngredientAnalysisResult) => ing.name),
       nonVeganIngredients: ingredients.filter((ing: IngredientAnalysisResult) => ing.isVegan === false).map((ing: IngredientAnalysisResult) => ing.name)
     };

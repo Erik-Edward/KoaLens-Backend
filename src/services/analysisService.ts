@@ -426,16 +426,20 @@ export class AnalysisService {
    * Split text into ingredients for analysis
    */
   private splitTextToIngredients(text: string): string[] {
-    // Remove common headers
+    // Remove common headers and "may contain" / "traces of" information
+    // Match patterns like "Kan innehålla:", "Spår av:", "May contain:", "Traces of:" followed by anything until end of line or next main delimiter.
     const cleanedText = text
       .replace(/^(?:ing?redien(?:s|t)er|innehåll|inneh[åa]ller|ingredients|contents)\s*:\s*/i, '')
+      .replace(/(?:kan innehålla|spår av|may contain|traces of)\b.*?(?=[,;\n•*\-–—]|$)/gi, '') // Remove the entire "may contain" section
       .trim();
     
     // Split by common ingredient separators
-    return cleanedText
+    const ingredients = cleanedText
       .split(/\s*[,;]\s*|\s*[•*\-–—]\s*|\s+och\s+|\s+and\s+|\s*\r?\n\s*/)
       .map(part => part.trim())
       .filter(part => part.length > 0);
+    
+    return ingredients;
   }
   
   /**

@@ -7,7 +7,7 @@ const GEMINI_CONFIG = {
   apiKey: process.env.GEMINI_API_KEY || '',
   modelName: process.env.GEMINI_MODEL_NAME || 'gemini-2.0-flash',
   maxOutputTokens: parseInt(process.env.GEMINI_MAX_OUTPUT_TOKENS || '2048', 10),
-  temperature: parseFloat(process.env.GEMINI_TEMPERATURE || '0.4'),
+  temperature: parseFloat(process.env.GEMINI_TEMPERATURE || '0.2'),
   topK: parseInt(process.env.GEMINI_TOP_K || '40', 10),
   topP: parseFloat(process.env.GEMINI_TOP_P || '0.8'),
 };

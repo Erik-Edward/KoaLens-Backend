@@ -5,6 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { logger } from './logger';
+import { normalizeString } from '../services/veganValidator';
 
 interface IngredientData {
   name: string;
@@ -22,41 +23,6 @@ let veganCache: IngredientData[] | null = null; // Cache for vegan ingredients
 
 // Known non-vegan ingredients, including animal products and derivatives
 // export const knownNonVeganIngredients: string[] = [...];
-
-// Common translations of ingredients (for multilingual support)
-export const ingredientTranslations: Record<string, string[]> = {
-  // Swedish to other languages - format: 'swedish': ['english', 'german', 'french', 'spanish', 'italian', 'dutch']
-  'socker': ['sugar', 'zucker', 'sucre', 'azúcar', 'zucchero', 'suiker'],
-  'salt': ['salt', 'salz', 'sel', 'sal', 'sale', 'zout'],
-  'mjölk': ['milk', 'milch', 'lait', 'leche', 'latte', 'melk'],
-  'grädde': ['cream', 'sahne', 'crème', 'crema', 'panna', 'room'],
-  'smör': ['butter', 'butter', 'beurre', 'mantequilla', 'burro', 'boter'],
-  'ägg': ['egg', 'ei', 'œuf', 'huevo', 'uovo', 'ei'],
-  'vetemjöl': ['wheat flour', 'weizenmehl', 'farine de blé', 'harina de trigo', 'farina di frumento', 'tarwebloem'],
-  'kött': ['meat', 'fleisch', 'viande', 'carne', 'carne', 'vlees'],
-  'fisk': ['fish', 'fisch', 'poisson', 'pescado', 'pesce', 'vis'],
-  'ost': ['cheese', 'käse', 'fromage', 'queso', 'formaggio', 'kaas'],
-  'vatten': ['water', 'wasser', 'eau', 'agua', 'acqua', 'water'],
-  'olja': ['oil', 'öl', 'huile', 'aceite', 'olio', 'olie'],
-  'jäst': ['yeast', 'hefe', 'levure', 'levadura', 'lievito', 'gist'],
-  'sojasås': ['soy sauce', 'sojasoße', 'sauce soja', 'salsa de soja', 'salsa di soia', 'sojasaus'],
-  'tofu': ['tofu', 'tofu', 'tofu', 'tofu', 'tofu', 'tofu'],
-  'ris': ['rice', 'reis', 'riz', 'arroz', 'riso', 'rijst'],
-  'potatis': ['potato', 'kartoffel', 'pomme de terre', 'patata', 'patata', 'aardappel'],
-  'tomater': ['tomatoes', 'tomaten', 'tomates', 'tomates', 'pomodori', 'tomaten'],
-  'lök': ['onion', 'zwiebel', 'oignon', 'cebolla', 'cipolla', 'ui'],
-  'vitlök': ['garlic', 'knoblauch', 'ail', 'ajo', 'aglio', 'knoflook'],
-  'nötter': ['nuts', 'nüsse', 'noix', 'nueces', 'noci', 'noten'],
-  'frukt': ['fruit', 'frucht', 'fruit', 'fruta', 'frutta', 'fruit'],
-  'bär': ['berries', 'beeren', 'baies', 'bayas', 'bacche', 'bessen'],
-  'choklad': ['chocolate', 'schokolade', 'chocolat', 'chocolate', 'cioccolato', 'chocolade'],
-  'honung': ['honey', 'honig', 'miel', 'miel', 'miele', 'honing'],
-  'yoghurt': ['yogurt', 'joghurt', 'yaourt', 'yogur', 'yogurt', 'yoghurt'],
-  'vinäger': ['vinegar', 'essig', 'vinaigre', 'vinagre', 'aceto', 'azijn'],
-  'senap': ['mustard', 'senf', 'moutarde', 'mostaza', 'senape', 'mosterd'],
-  'kanel': ['cinnamon', 'zimt', 'cannelle', 'canela', 'cannella', 'kaneel'],
-  'peppar': ['pepper', 'pfeffer', 'poivre', 'pimienta', 'pepe', 'peper']
-};
 
 /**
  * Ladda icke-veganska ingredienser från CSV-filen
@@ -236,8 +202,8 @@ export function checkIngredientStatus(ingredientName: string): {
     logger.info(`[checkIngredientStatus] Checking E304 ingredient: ${ingredientName}`);
   }
   
-  // Normalisera namn för jämförelse
-  const normalizedName = ingredientName.toLowerCase().trim();
+  // Normalisera namn för jämförelse med den delade funktionen
+  const normalizedName = normalizeString(ingredientName);
   
   // Kontrollera efter E-nummer
   const eNumberMatch = normalizedName.match(/e([0-9]{3,4}[a-z]?)/i);
@@ -265,7 +231,7 @@ export function checkIngredientStatus(ingredientName: string): {
   
   // 1. Kontrollera om ingrediensen är känd icke-vegansk
   const nonVeganMatch = nonVeganList.find(item => 
-    normalizedName.includes(item.name.toLowerCase()) || 
+    normalizedName.includes(normalizeString(item.name)) ||
     (eNumber && item.eNumber && item.eNumber.toUpperCase() === eNumber)
   );
   
@@ -283,7 +249,7 @@ export function checkIngredientStatus(ingredientName: string): {
   
   // 2. Kontrollera om ingrediensen är osäker
   const uncertainMatch = uncertainList.find(item => 
-    normalizedName.includes(item.name.toLowerCase()) || 
+    normalizedName.includes(normalizeString(item.name)) ||
     (eNumber && item.eNumber && item.eNumber.toUpperCase() === eNumber)
   );
   
@@ -301,7 +267,7 @@ export function checkIngredientStatus(ingredientName: string): {
 
   // 3. Kontrollera om ingrediensen är känd vegansk
   const veganMatch = veganList.find(item => 
-    normalizedName.includes(item.name.toLowerCase()) || 
+    normalizedName.includes(normalizeString(item.name)) ||
     (eNumber && item.eNumber && item.eNumber.toUpperCase() === eNumber)
   );
 
@@ -322,47 +288,6 @@ export function checkIngredientStatus(ingredientName: string): {
     logger.info(`[checkIngredientStatus] E304 not matched in any list`);
   }
   return { isVegan: null, isUncertain: false };
-}
-
-/**
- * Get translations for an ingredient name
- * @param ingredientName Swedish name of the ingredient
- * @returns Array of translations or empty array if not found
- */
-export function getIngredientTranslations(ingredientName: string): string[] {
-  const normalizedName = ingredientName.toLowerCase().trim();
-  return ingredientTranslations[normalizedName] || [];
-}
-
-/**
- * Translate an ingredient name to Swedish using the translation map
- * @param name Name to translate
- * @param sourceLanguage Language of the name (e.g., 'en')
- * @returns Swedish translation or the original name if not found
- */
-export function translateToSwedish(name: string, sourceLanguage: string): string {
-  if (sourceLanguage === 'sv') {
-    return name; // Already Swedish
-  }
-
-  const lowerCaseName = name.toLowerCase();
-  
-  for (const swedishName in ingredientTranslations) {
-    const translations = ingredientTranslations[swedishName];
-    const langIndex = getLanguageIndex(sourceLanguage);
-    
-    if (langIndex !== -1 && translations[langIndex]?.toLowerCase() === lowerCaseName) {
-      return swedishName; // Return the Swedish key
-    }
-  }
-  
-  return name; // Return original name if no translation found
-}
-
-/** Helper to get index for a language in the translation array */
-function getLanguageIndex(lang: string): number {
-  const langOrder = ['en', 'de', 'fr', 'es', 'it', 'nl'];
-  return langOrder.indexOf(lang.toLowerCase());
 }
 
 // Initialisera databaserna vid start
