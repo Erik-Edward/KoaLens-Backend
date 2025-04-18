@@ -66,7 +66,7 @@ Natriumbensoat,E211,Salt av bensoesyra för konservering
 Kaliumbensoat,E212,Salt av bensoesyra för konservering
 Kalciumbensoat,E213,Salt av bensoesyra för konservering
 Para-hydroxybensoesyraetylester,E214,Syntetiskt konserveringsmedel
-Para-hydroxybensoesyranatriumetylester,E215,Syntetiskt konserveringsmedel
+Para-hydroxybensoesyranatriumpropylester,E215,Syntetiskt konserveringsmedel
 Para-hydroxybensoesyrapropylester,E216,Syntetiskt konserveringsmedel
 Para-hydroxybensoesyrametylester,E218,Syntetiskt konserveringsmedel
 Para-hydroxybensoesyranatriumpropylester,E217,Syntetiskt konserveringsmedel
@@ -339,3 +339,9 @@ Stärkelseoktenylsuccinat,E1452,Modifierad stärkelse från växter
 Cellulosa,E1505,Modifierad cellulosa från växter
 Trietylcitrat,E1510,Växtbaserad emulgator
 Propylenglykol,E1520,Syntetisk fuktighetsbevarande medel
+Glyceryldiacetat,E1517,Modifierad stärkelse från växter
+Glyceryltriacetat,E1518,Modifierad stärkelse från växter
+Arom,,Naturlig smaktillsats från växtriket
+Naturlig arom,,Naturlig smaktillsats från växtriket
+Palmolja,,Vegetabilisk olja från oljepalmen
+Vetemjöl,,Mjöl malet från vetekorn, vegetabiliskt

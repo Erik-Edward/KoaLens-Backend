@@ -8,6 +8,7 @@ export interface IngredientAnalysisResult {
   confidence: number;
   reason?: string;
   usageInfo?: UsageInfo;
+  source: "declared" | "trace";
 }
 
 /**
@@ -30,8 +31,8 @@ export interface VideoAnalysisResult {
   confidence: number;
   reasoning?: string;
   uncertainReasons?: string[];
-  uncertainIngredients?: IngredientAnalysisResult[];
-  nonVeganIngredients?: IngredientAnalysisResult[];
+  uncertainIngredients: string[];
+  nonVeganIngredients: string[];
   usageInfo?: UsageInfo;
   videoProcessed?: boolean;
   preferredLanguage?: string;

@@ -81,7 +81,6 @@ export const DEFINITELY_NON_VEGAN = new Set([
     'stearin', 'stearinsyra',
     
     // Övriga
-    'arom', 'naturlig arom',
     'emulgeringsmedel', 'emulgator',
     'stabiliseringsmedel', 'stabilisator',
     'klargöringsmedel', 'klarningsmedel',
@@ -158,6 +157,7 @@ export const DEFINITELY_NON_VEGAN = new Set([
     'vetemjöl', 'wheat flour',
     'jäst', 'yeast',
     'jästextrakt', 'yeast extract',
+    'arom', 'naturlig arom',
     
     // Grönsaker och frukter som kan misstas
     'äggplanta',

@@ -1,0 +1,5 @@
+TimeSeries ID,api/request_count.consumed_api.ALIGN_RATE.REDUCE_SUM.resource.type="consumed_api" AND metric.type="serviceruntime.googleapis.com/api/request_count" AND project="gen-lang-client-0365132841" AND resource.labels.service="generativelanguage.googleapis.com".project_id:gen-lang-client-0365132841.response_code:500
+response_code,500
+project_id,gen-lang-client-0365132841
+Fri Apr 18 2025 11:25:00 GMT+0200 (centraleuropeisk sommartid),0.10749929165486091
+Fri Apr 18 2025 11:26:00 GMT+0200 (centraleuropeisk sommartid),0.04250070834513909
