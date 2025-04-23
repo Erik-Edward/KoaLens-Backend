@@ -3,7 +3,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const apiKey = process.env.GEMINI_API_KEY;
 const genAI = new GoogleGenerativeAI(apiKey);
-const modelName = 'gemini-2.5-pro-exp-03-25'; // Using the specific experimental model
+const modelName = 'gemini-2.0-flash'; // Updated to the currently used model
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 

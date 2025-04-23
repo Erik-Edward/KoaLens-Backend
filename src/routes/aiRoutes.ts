@@ -27,48 +27,7 @@ router.post('/test-endpoint', (req: Request, res: Response) => {
  * Redirect /api/ai/analyze-image to /api/analyze/image
  * This maintains backward compatibility with frontend
  */
-router.post('/analyze-image', async (req: Request, res: Response) => {
-  try {
-    const { image, preferredLanguage } = req.body;
-    
-    // Log the redirect for monitoring
-    logger.info('Processing request from /api/ai/analyze-image', {
-      hasImage: !!image,
-      preferredLanguage
-    });
-    
-    // Validate request content
-    if (!image) {
-      logger.warn('Missing image in analysis request');
-      res.status(400).json({
-        error: 'MISSING_IMAGE',
-        message: 'No image provided for analysis'
-      });
-      return;
-    }
-    
-    // Process request using the analysis service directly
-    // This effectively forwards the request to the same implementation
-    // that would be used by /api/analyze/image
-    const imageBase64 = typeof image === 'string' && image.startsWith('data:image') 
-      ? image.split(',')[1] 
-      : image;
-      
-    const result = await analysisService.analyzeImage(imageBase64, preferredLanguage);
-    res.json(result);
-    
-  } catch (error: any) {
-    logger.error('Error in AI image analysis endpoint', { 
-      error: error.message, 
-      stack: error.stack
-    });
-    
-    res.status(500).json({
-      error: 'IMAGE_ANALYSIS_ERROR',
-      message: `An error occurred during image analysis: ${error.message}`
-    });
-  }
-});
+// router.post('/analyze-image', ...); // ROUTE REMOVED
 
 /**
  * Redirect /api/ai/analyze-text to /api/analyze/text

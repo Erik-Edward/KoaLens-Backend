@@ -99,6 +99,8 @@ export class AnalysisService {
   /**
    * Analyze an image to identify ingredients and determine vegan status
    */
+  // Function removed as it is no longer used
+  /*
   async analyzeImage(imageBase64: string, preferredLanguage?: string): Promise<AnalysisResult> {
     const startTime = performance.now();
     

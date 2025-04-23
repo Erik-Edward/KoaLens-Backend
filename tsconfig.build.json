@@ -4,9 +4,7 @@
         "**/*.test.ts",
         "**/*.spec.ts",
         "verify-api.js",
-        "src/routes/testGemini.ts",
-        "src/services/videoAnalysisService.ts",
-        "src/services/veganValidator.ts"
+        "src/routes/testGemini.ts"
     ],
     "compilerOptions": {
         "skipLibCheck": true,

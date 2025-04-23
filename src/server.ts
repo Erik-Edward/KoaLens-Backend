@@ -44,7 +44,7 @@ import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold, GenerationConfig 
 
 // Relative imports (without .js extension)
 import { validateIngredients } from './services/veganValidator';
-import { compressImage, getBase64Size } from './utils/imageProcessor';
+// import { compressImage, getBase64Size } from './utils/imageProcessor'; // REMOVED IMPORT
 import { checkUserLimit, incrementAnalysisCount } from './services/supabaseService';
 
 // Load environment variables
@@ -227,269 +227,30 @@ interface AnalyzeRequestBody {
 // Adapt getUserFriendlyError if Gemini errors are different
 // function getUserFriendlyError(...) { ... }
 
-// --- REFACTOR analyzeImage function ---
+// --- REFACTOR analyzeImage function --- REMOVED ---
+/*
 const analyzeImage = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
-  try {
-    console.log('Received analyze request (Gemini)');
-    const { image, isCroppedImage, userId } = req.body as AnalyzeRequestBody;
-
-    if (!image) {
-      // Use return to stop execution, but the error is now handled by middleware
-      // We could potentially create a custom error type here
-      const err = new Error('Ingen bild hittades');
-      (err as any).status = 400; // Add status for error handler
-      (err as any).errorCode = 'IMAGE_MISSING';
-      return next(err); 
-    }
-
-    if (userId) {
-      console.log('Checking usage limit for user:', userId);
-      try {
-        const userLimit = await checkUserLimit(userId);
-        console.log('User limit check result:', {
-          userId, 
-          analysesUsed: userLimit.analysesUsed, 
-          analysesLimit: userLimit.analysesLimit, 
-          hasRemainingAnalyses: userLimit.hasRemainingAnalyses,
-          isPremium: userLimit.isPremium
-        });
-        
-        if (!userLimit.hasRemainingAnalyses) {
-          console.log('User has reached usage limit:', userId);
-          const err = new Error('Du har nått din månatliga gräns för analyser.');
-          (err as any).status = 403;
-          (err as any).errorCode = 'USAGE_LIMIT_EXCEEDED';
-          (err as any).details = {
-            analysesUsed: userLimit.analysesUsed,
-            analysesLimit: userLimit.analysesLimit,
-            isPremium: userLimit.isPremium
-          };
-          return next(err); // Pass error to middleware
-        }
-      } catch (error) {
-        console.error('Error checking user limit:', error);
-        // Pass error to middleware instead of sending response
-        const err = new Error('Kunde inte verifiera användargräns.');
-        (err as any).status = 500;
-        (err as any).originalError = error;
-        return next(err); 
-      }
-    } else {
-      console.warn('No user ID provided in analysis request');
-    }
-
-    console.log('Processing image (Gemini)...', {
-      isCropped: isCroppedImage,
-      hasUserId: !!userId
-    });
-    
-    let base64Data: string;
-    if (image.startsWith('data:image')) {
-      base64Data = image.split(',')[1];
-    } else {
-      base64Data = image;
-    }
-
-    const initialSize = getBase64Size(base64Data);
-    console.log(`Initial image size: ${(initialSize / 1024 / 1024).toFixed(2)}MB`);
-
-    console.log('Compressing image...');
-    try {
-      base64Data = await compressImage(base64Data, {
-        quality: isCroppedImage ? 1 : 0.8, // Högre kvalitet för beskurna bilder
-        maxWidth: isCroppedImage ? 2000 : 1500,
-        maxHeight: isCroppedImage ? 2000 : 1500,
-        enhanceContrast: true // Aktivera kontrastförbättring
-      });
-      const compressedSize = getBase64Size(base64Data);
-      console.log(`Compressed image size: ${(compressedSize / 1024 / 1024).toFixed(2)}MB`);
-    } catch (compressionError) {
-      console.error('Error during image compression:', compressionError);
-       const err = new Error('Bildkomprimering misslyckades.');
-       (err as any).status = 500;
-       (err as any).originalError = compressionError;
-       return next(err); // Pass error to middleware
-    }
-
-    // Select Gemini prompt
-    const analysisPromptText = isCroppedImage ? CROPPED_IMAGE_PROMPT : ANALYSIS_PROMPT;
-    console.log('Using Gemini prompt for', isCroppedImage ? 'cropped' : 'uncropped', 'image');
-
-    // --- Gemini API Call ---
-    console.log('Sending request to Gemini...');
-    
-    const parts = [
-      { text: analysisPromptText },
-      {
-        inlineData: {
-          mimeType: "image/jpeg", // Assuming JPEG after compression
-          data: base64Data
-        }
-      },
-    ];
-
-    const result = await geminiModel.generateContent({
-      contents: [{ role: "user", parts }],
-      generationConfig,
-      safetySettings,
-    });
-
-    console.log('Received response from Gemini');
-    
-    // --- Gemini Response Handling ---
-    if (!result.response) {
-       console.error("Gemini response was empty or undefined.");
-       const err = new Error('Ett oväntat svar mottogs från Gemini.');
-       (err as any).status = 500;
-       return next(err); // Pass error to middleware
-    }
-
-    const responseContent = result.response.candidates?.[0]?.content;
-    if (!responseContent || responseContent.role !== 'model' || !responseContent.parts?.[0]?.text) {
-        console.error("Invalid response structure from Gemini:", JSON.stringify(result.response, null, 2));
-        if (result.response.promptFeedback?.blockReason) {
-             console.error(`Gemini request blocked: ${result.response.promptFeedback.blockReason}`);
-             const err = new Error(`Analysen blockerades av säkerhetsskäl: ${result.response.promptFeedback.blockReason}`);
-             (err as any).status = 400;
-             (err as any).errorCode = 'ANALYSIS_BLOCKED'; // More specific code
-             return next(err); // Pass error to middleware
-        }
-        const err = new Error('Kunde inte extrahera text från Gemini-svaret.');
-        (err as any).status = 500;
-        return next(err); // Pass error to middleware
-    }
-
-    const geminiRawText = responseContent.parts[0].text;
-    console.log('Raw Gemini response text:', geminiRawText);
-
-    let analysisResult: GeminiAnalysisResult;
-    try {
-      // Gemini should return JSON directly because of responseMimeType
-      analysisResult = JSON.parse(geminiRawText) as GeminiAnalysisResult;
-       // Basic validation of the parsed result
-      if (typeof analysisResult.isVegan === 'undefined' || 
-          typeof analysisResult.confidence === 'undefined' ||
-          !analysisResult.ingredientList) {
-          const err = new Error('Ofullständigt JSON-svar från Gemini.');
-          (err as any).status = 500;
-          return next(err); // Pass error to middleware
-      }
-       // Ensure confidence is a number between 0 and 1
-       analysisResult.confidence = Math.max(0, Math.min(1, Number(analysisResult.confidence) || 0));
-
-
-    } catch (parseError) {
-      console.error("Failed to parse JSON response from Gemini:", parseError);
-      console.error("Raw text that failed parsing:", geminiRawText);
-      // Attempt to handle non-JSON response or provide a generic error
-      // Maybe try a simpler prompt if this fails often?
-      // For now, throw a user-friendly error.
-      const err = new Error('Kunde inte tolka analysresultatet från Gemini.');
-      (err as any).status = 500;
-      (err as any).originalError = parseError;
-      return next(err); // Pass error to middleware
-    }
-    
-    console.log('Parsed Gemini result:', analysisResult);
-
-    // --- Validation and Final Result Logic (Needs Adaptation) ---
-    // This part needs significant review/adaptation based on how Gemini's 
-    // 'reasoning', 'confidence', and quality indicators work compared to Claude.
-    
-    // TODO: Adapt logPotentialMisreading for Gemini if needed.
-    // TODO: Adapt detectImageQualityIssues based on Gemini's reasoning/output.
-    // TODO: Adapt determineVeganStatus logic for Gemini's confidence/reasoning.
-    
-    const validationResult = validateIngredients(analysisResult.ingredientList);
-    console.log('Local validation result:', validationResult);
-
-    // Example simplified status determination (replace with adapted logic)
-    let finalVeganStatus = analysisResult.isVegan === null ? null : (analysisResult.isVegan && validationResult.isVegan);
-    
-    // --- Determine final uncertainty ---
-    // Combine uncertainty from Gemini and local validation
-    const finalIsUncertain = analysisResult.isUncertain;
-    
-    // If uncertain, isVegan must be null
-    if (finalIsUncertain && finalVeganStatus !== null) {
-        finalVeganStatus = null; 
-        console.log('Overriding finalVeganStatus to null due to uncertainty');
-    }
-    
-    // Check quality based on Gemini reasoning (example, needs refinement)
-     const reasoningLower = analysisResult.reasoning?.toLowerCase() || "";
-     const lowQualityKeywords = ['cannot read', 'blurry', 'unclear', 'cut off', 'incomplete', 'kan inte läsa', 'suddig', 'oklar', 'avklippt', 'ofullständig'];
-     const needsBetterImage = lowQualityKeywords.some(kw => reasoningLower.includes(kw)) || analysisResult.confidence < 0.6; // Example threshold
-
-    if (needsBetterImage && finalVeganStatus !== false) { // Don't ask for better image if definitely non-vegan
-         console.log("Requesting better image based on Gemini reasoning/confidence");
-         // TODO: Create a more nuanced Quality Error based on Gemini's reasoning
-         const err = new Error('Bilden behöver vara tydligare för en säker analys.');
-         (err as any).status = 400;
-         (err as any).errorCode = 'IMAGE_QUALITY';
-         (err as any).details = { suggestions: ['Försök ta en ny bild med bättre ljus.', 'Se till att hela listan är synlig.'] };
-         return next(err); // Pass error to middleware
-    }
-
-    const nonVeganIngredients = finalVeganStatus === null 
-      ? [] 
-      : Array.from(new Set([
-          ...(analysisResult.nonVeganIngredients || []), // Handle potentially missing field
-          ...validationResult.nonVeganIngredients
-        ]));
-        
-    const uncertainIngredients = finalIsUncertain
-      ? Array.from(new Set([
-          ...(analysisResult.uncertainIngredients || []),
-        ]))
-      : [];
-
-    const finalResult: IngredientAnalysisResult = {
-      isVegan: finalVeganStatus,
-      isUncertain: finalIsUncertain, // Added missing property
-      confidence: Math.min(analysisResult.confidence, validationResult.confidence),
-      allIngredients: analysisResult.ingredientList,
-      nonVeganIngredients: nonVeganIngredients,
-      uncertainIngredients: uncertainIngredients, // Added missing property
-      reasoning: analysisResult.reasoning || "Ingen detaljerad motivering angavs.",
-      usageUpdated: false, // Initialize as false
-      usageInfo: undefined // Initialize as undefined
-    };
-
-    // Increment usage count and update usageInfo
-    if (userId) {
-      try {
-        console.log('Incrementing analysis count for user:', userId);
-        const countResult = await incrementAnalysisCount(userId);
-        console.log('Analysis count incremented:', countResult);
-        
-        finalResult.usageUpdated = true;
-        finalResult.usageInfo = {
-          analysesUsed: countResult.analysesUsed,
-          analysesLimit: countResult.analysesLimit,
-          // Calculate remaining based on the latest count
-          remaining: countResult.isPremium ? Infinity : Math.max(0, countResult.analysesLimit - countResult.analysesUsed), 
-          isPremium: countResult.isPremium 
-        };
-      } catch (error) {
-        console.error('Failed to increment analysis count:', error);
-        // Log error but don't fail the request just for this
-        finalResult.usageUpdated = false; // Mark as not updated if count failed
-      }
-    }
-
-    console.log('Sending final result (Gemini):', finalResult);
-    res.json(finalResult);
-
-  } catch (error) {
-    // --- Outer Catch Block --- 
-    console.error('Error analyzing image (Gemini) - Outer catch:', error);
-    // Pass any unexpected errors to the middleware
-    next(error); 
-  }
+  // ... function body ...
 };
+*/
 
-app.post('/analyze', analyzeImage);
+// --- Error Handling Middleware (Keep this) ---
+// ... existing code ...
+
+
+// --- Route Definitions (Removing incorrect lines) ---
+// app.use('/api/health', healthRoutes); // Assuming healthRoutes is handled elsewhere or removed
+// app.use('/api/ai', aiRoutes); // Keep if other routes exist
+// app.use('/api/analyze', analyzeRoutes); // REMOVED (Handled by apiRoutes)
+// app.use('/api/counter', counterRoutes); // REMOVED (Handled by apiRoutes)
+// app.use('/api/user', userRoutes); // REMOVED (Handled by apiRoutes)
+// app.use('/api/video', videoRoutes); // REMOVED (Handled by apiRoutes)
+
+// Remove specific analyze route for images
+// app.post('/analyze', analyzeImage); // ROUTE REMAINS REMOVED
+
+// --- Centralized Error Handler (Keep this) ---
+// ... existing code ...
 
 // Lägg till en ny endpoint för att kontrollera användarens användningsstatus
 app.get('/usage/:userId', async (req, res) => {
