@@ -19,6 +19,9 @@ import compression from 'compression';
 import { logger } from './utils/logger';
 // import winston from 'winston'; // Remove unused import
 // import path from 'path'; // Remove unused import
+import http from 'http';
+import { WebSocketServer } from 'ws';
+import { LiveAnalysisService } from './services/liveAnalysisService';
 
 // Remove module-alias import from here
 // import moduleAlias from 'module-alias'; 
@@ -375,11 +378,38 @@ logger.info('Starting server with environment:', {
   GEMINI_API_KEY: process.env.GEMINI_API_KEY ? `configured (length: ${process.env.GEMINI_API_KEY.length})` : 'missing'
 });
 
-// Import http module
-const http = require('http');
-
 // Create HTTP server explicitly 
 const server = http.createServer(app);
+
+// +++ NY WEBSOCKET-SERVER SETUP +++
+// Skapa WebSocketServer och koppla den till HTTP-servern
+const wss = new WebSocketServer({ server }); // Koppla till din HTTP server
+
+logger.info('WebSocket server initialized and attached to HTTP server.');
+
+wss.on('connection', (ws) => {
+    logger.info('WebSocket client connected');
+    // Skapa en ny instans av din LiveAnalysisService för varje anslutning
+    try {
+      new LiveAnalysisService(ws); // LiveAnalysisService hanterar resten
+    } catch (serviceError) {
+        logger.error('Error creating LiveAnalysisService instance:', serviceError);
+        // Stäng anslutningen om servicen inte kunde skapas
+        ws.close(1011, 'Internal server error initializing analysis session.');
+    }
+
+    // Grundläggande fel/stängningshantering här är ok, men LiveAnalysisService hanterar det mesta internt
+    ws.on('error', (error) => {
+        logger.error('Direct WebSocket connection error:', error);
+    });
+
+     ws.on('close', (code, reason) => {
+         // Use Buffer.from(reason).toString() to safely convert potential Buffer reason
+         const reasonString = Buffer.isBuffer(reason) ? Buffer.from(reason).toString() : String(reason);
+         logger.info(`Direct WebSocket connection closed by client. Code: ${code}, Reason: ${reasonString}`);
+     });
+});
+// +++ SLUT NY WEBSOCKET-SERVER SETUP +++
 
 // Start server with explicit host binding for Fly.io compatibility
 server.listen(PORT, HOST, () => {
